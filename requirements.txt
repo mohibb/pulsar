@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pycoingecko
+pandas
+pandas-ta
+scikit-learn
+apscheduler
+httpx
