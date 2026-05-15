@@ -1,4 +1,5 @@
 """Technical indicator computation — stub for Phase 2."""
+
 from typing import Optional
 
 

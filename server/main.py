@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 import logging
@@ -20,7 +21,6 @@ from data import (
 from indicators import compute_indicators, compute_signal
 from ml import get_ml_score
 from portfolio import load_portfolio, save_portfolio, reset_portfolio
-from scheduler import setup_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,12 +32,29 @@ async def lifespan(app: FastAPI):
     init_data()
     await refresh_feargreed()
     from scheduler import scheduler
-    scheduler.add_job(__import__('data').refresh_coins, "interval", seconds=60, id="refresh_coins", replace_existing=True)
-    scheduler.add_job(__import__('data').refresh_all_ohlc, "interval", hours=6, id="refresh_ohlc", replace_existing=True)
+
+    scheduler.add_job(
+        __import__("data").refresh_coins,
+        "interval",
+        seconds=60,
+        id="refresh_coins",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        __import__("data").refresh_all_ohlc,
+        "interval",
+        hours=6,
+        id="refresh_ohlc",
+        replace_existing=True,
+    )
     import asyncio
+
     scheduler.add_job(
         lambda: asyncio.ensure_future(refresh_feargreed()),
-        "interval", hours=1, id="refresh_feargreed", replace_existing=True,
+        "interval",
+        hours=1,
+        id="refresh_feargreed",
+        replace_existing=True,
     )
     scheduler.start()
     logger.info("Scheduler started")
@@ -57,6 +74,7 @@ app.add_middleware(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _build_coin_response(raw: dict) -> dict:
     coin_id = raw["id"]
@@ -149,6 +167,7 @@ def _feargreed_interpretation(value: int, trend: int) -> str:
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+
 @app.get("/api/coins")
 def api_coins():
     cache, ts = get_coins_cache()
@@ -173,8 +192,12 @@ def api_market():
 
     btc = cache.get("bitcoin", {})
     eth = cache.get("ethereum", {})
-    btc_dom = round((btc.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
-    eth_dom = round((eth.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
+    btc_dom = (
+        round((btc.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
+    )
+    eth_dom = (
+        round((eth.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
+    )
 
     changes = [c.get("price_change_percentage_24h") or 0.0 for c in coins]
     advancing = sum(1 for ch in changes if ch > 0)
@@ -272,17 +295,19 @@ def api_signals():
         ml_score = get_ml_score(coin_id)
         comp_score, comp_verdict, comp_label = _composite_score(sig["signal_score"], ml_score)
 
-        signals.append({
-            "coin_id": coin_id,
-            "symbol": raw["symbol"],
-            "signal": sig["signal"],
-            "signal_score": sig["signal_score"],
-            "ml_score": ml_score,
-            "composite_score": round(comp_score, 1),
-            "composite_verdict": comp_verdict,
-            "composite_label": comp_label,
-            "reasons": sig["reasons"],
-        })
+        signals.append(
+            {
+                "coin_id": coin_id,
+                "symbol": raw["symbol"],
+                "signal": sig["signal"],
+                "signal_score": sig["signal_score"],
+                "ml_score": ml_score,
+                "composite_score": round(comp_score, 1),
+                "composite_verdict": comp_verdict,
+                "composite_label": comp_label,
+                "reasons": sig["reasons"],
+            }
+        )
 
     return {
         "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
@@ -293,6 +318,7 @@ def api_signals():
 @app.get("/api/portfolio")
 def api_portfolio():
     from data import get_coins_cache
+
     portfolio = load_portfolio()
     coins_cache, _ = get_coins_cache()
 
@@ -306,16 +332,18 @@ def api_portfolio():
         pnl = value - h["amount"] * h["avg_buy_price"]
         pnl_pct = (current_price - h["avg_buy_price"]) / h["avg_buy_price"] * 100
 
-        holdings_list.append({
-            "coin_id": coin_id,
-            "symbol": coin.get("symbol", coin_id),
-            "amount": h["amount"],
-            "avg_buy_price": h["avg_buy_price"],
-            "current_price": current_price,
-            "value": round(value, 2),
-            "pnl": round(pnl, 2),
-            "pnl_pct": round(pnl_pct, 2),
-        })
+        holdings_list.append(
+            {
+                "coin_id": coin_id,
+                "symbol": coin.get("symbol", coin_id),
+                "amount": h["amount"],
+                "avg_buy_price": h["avg_buy_price"],
+                "current_price": current_price,
+                "value": round(value, 2),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+            }
+        )
         total_holdings_value += value
 
     total_value = portfolio["cash"] + total_holdings_value
@@ -361,15 +389,17 @@ def api_portfolio_buy(body: dict):
         portfolio["holdings"][coin_id] = {"amount": amount, "avg_buy_price": price}
 
     portfolio["cash"] -= usd_amount
-    portfolio["transactions"].append({
-        "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
-        "type": "buy",
-        "coin_id": coin_id,
-        "amount": amount,
-        "price": price,
-        "total": usd_amount,
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-    })
+    portfolio["transactions"].append(
+        {
+            "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
+            "type": "buy",
+            "coin_id": coin_id,
+            "amount": amount,
+            "price": price,
+            "total": usd_amount,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        }
+    )
     save_portfolio(portfolio)
     return api_portfolio()
 
@@ -401,15 +431,17 @@ def api_portfolio_sell(body: dict):
         del portfolio["holdings"][coin_id]
 
     portfolio["cash"] += usd_amount
-    portfolio["transactions"].append({
-        "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
-        "type": "sell",
-        "coin_id": coin_id,
-        "amount": amount_to_sell,
-        "price": price,
-        "total": usd_amount,
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-    })
+    portfolio["transactions"].append(
+        {
+            "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
+            "type": "sell",
+            "coin_id": coin_id,
+            "amount": amount_to_sell,
+            "price": price,
+            "total": usd_amount,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        }
+    )
     save_portfolio(portfolio)
     return api_portfolio()
 

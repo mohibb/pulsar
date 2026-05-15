@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+pythonpath = ["server"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E402",  # module-level import after sys.path manipulation — intentional
+    "E501",  # line too long — not enforced at this stage
+]
+
+[tool.ruff.lint.per-file-ignores]
+"server/tests/*" = ["F811"]  # redefinition of unused name (fixtures)

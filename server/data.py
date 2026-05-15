@@ -1,6 +1,5 @@
 import time
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -16,8 +15,8 @@ _coins_cache: dict = {}
 _coins_cache_ts: float = 0.0
 _COINS_TTL = 60  # seconds
 
-_ohlc_cache: dict[str, dict] = {}      # coin_id → {data, ts}
-_OHLC_TTL = 6 * 3600                   # 6 hours
+_ohlc_cache: dict[str, dict] = {}  # coin_id → {data, ts}
+_OHLC_TTL = 6 * 3600  # 6 hours
 
 _feargreed_cache: dict = {}
 _feargreed_cache_ts: float = 0.0
@@ -27,6 +26,7 @@ TOP_N = 10
 
 
 # ── Coins ────────────────────────────────────────────────────────────────────
+
 
 def _fetch_coins_raw() -> list[dict]:
     return cg.get_coins_markets(
@@ -65,6 +65,7 @@ def get_coin_price(coin_id: str) -> Optional[float]:
 
 # ── OHLC history ─────────────────────────────────────────────────────────────
 
+
 def _fetch_ohlc_raw(coin_id: str, days: int = 90) -> list:
     """Returns list of [timestamp_ms, open, high, low, close] from CoinGecko."""
     return cg.get_coin_ohlc_by_id(id=coin_id, vs_currency="usd", days=days)
@@ -95,6 +96,7 @@ def refresh_all_ohlc() -> None:
 
 # ── Fear & Greed ─────────────────────────────────────────────────────────────
 
+
 async def refresh_feargreed() -> None:
     global _feargreed_cache, _feargreed_cache_ts
     try:
@@ -113,6 +115,7 @@ def get_feargreed_cache() -> tuple[dict, float]:
 
 
 # ── Startup init ─────────────────────────────────────────────────────────────
+
 
 def init_data() -> None:
     """Synchronous init: fetch coins + OHLC on startup."""

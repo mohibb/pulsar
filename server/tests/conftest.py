@@ -1,0 +1,76 @@
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+MOCK_COINS = {
+    "bitcoin": {
+        "id": "bitcoin",
+        "symbol": "btc",
+        "name": "Bitcoin",
+        "image": "https://example.com/btc.png",
+        "current_price": 67_000.0,
+        "market_cap": 1_320_000_000_000,
+        "market_cap_rank": 1,
+        "total_volume": 34_200_000_000,
+        "price_change_percentage_24h": 2.41,
+        "price_change_percentage_7d_in_currency": -1.12,
+    },
+    "ethereum": {
+        "id": "ethereum",
+        "symbol": "eth",
+        "name": "Ethereum",
+        "image": "https://example.com/eth.png",
+        "current_price": 3_500.0,
+        "market_cap": 420_000_000_000,
+        "market_cap_rank": 2,
+        "total_volume": 15_000_000_000,
+        "price_change_percentage_24h": 1.5,
+        "price_change_percentage_7d_in_currency": 2.3,
+    },
+}
+
+# 90 candles: [timestamp_ms, open, high, low, close]
+MOCK_OHLC = [
+    [1_715_000_000_000 - i * 86_400_000, 65_000.0, 67_000.0, 63_000.0, 66_000.0] for i in range(90)
+]
+
+MOCK_FEARGREED = {
+    "data": [
+        {"value": "72", "value_classification": "Greed", "timestamp": "1715000000"},
+        {"value": "68", "value_classification": "Greed", "timestamp": "1714913600"},
+        {"value": "65", "value_classification": "Greed", "timestamp": "1714827200"},
+        {"value": "60", "value_classification": "Greed", "timestamp": "1714740800"},
+        {"value": "58", "value_classification": "Fear", "timestamp": "1714654400"},
+        {"value": "55", "value_classification": "Fear", "timestamp": "1714568000"},
+        {"value": "55", "value_classification": "Fear", "timestamp": "1714481600"},
+    ]
+}
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    import data
+    import main
+    import portfolio
+    from fastapi.testclient import TestClient
+    from scheduler import scheduler
+
+    monkeypatch.setattr(portfolio, "PORTFOLIO_FILE", tmp_path / "portfolio.json")
+
+    # Pre-populate caches so routes don't call external APIs
+    data._coins_cache = MOCK_COINS.copy()
+    data._coins_cache_ts = time.time()
+    data._feargreed_cache = MOCK_FEARGREED.copy()
+    data._feargreed_cache_ts = time.time()
+    data._ohlc_cache = {coin_id: {"data": MOCK_OHLC, "ts": time.time()} for coin_id in MOCK_COINS}
+
+    with (
+        patch.object(main, "init_data", return_value=None),
+        patch.object(main, "refresh_feargreed", new=AsyncMock()),
+        patch.object(scheduler, "add_job", MagicMock()),
+        patch.object(scheduler, "start", MagicMock()),
+        patch.object(scheduler, "shutdown", MagicMock()),
+    ):
+        with TestClient(main.app) as c:
+            yield c

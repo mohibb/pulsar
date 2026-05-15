@@ -1,9 +1,7 @@
 """Virtual portfolio logic — stub for Phase 3."""
+
 import json
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 PORTFOLIO_FILE = Path(__file__).parent / "portfolio.json"
 
