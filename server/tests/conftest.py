@@ -30,9 +30,17 @@ MOCK_COINS = {
     },
 }
 
-# 90 candles: [timestamp_ms, open, high, low, close]
+# 90 candles with cyclic variation so RSI/MACD/BB produce valid (non-NaN) values.
+# Close oscillates ±900 around 65 000 on a 7-bar cycle.
 MOCK_OHLC = [
-    [1_715_000_000_000 - i * 86_400_000, 65_000.0, 67_000.0, 63_000.0, 66_000.0] for i in range(90)
+    [
+        1_715_000_000_000 - i * 86_400_000,
+        65_000.0 + (i % 5) * 200,
+        67_000.0 + (i % 5) * 200 + 500,
+        63_000.0 + (i % 5) * 200 - 500,
+        65_000.0 + (i % 7 - 3) * 300,
+    ]
+    for i in range(90)
 ]
 
 MOCK_FEARGREED = {

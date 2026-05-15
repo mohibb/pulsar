@@ -117,29 +117,93 @@ def _composite_score(signal_score: float, ml_score) -> tuple[float, str, str]:
 
 
 def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
-    """Very basic market score — full logic lands in Phase 2."""
-    # Fear & Greed component (inverted at extremes): high greed lowers score
-    if fg_value <= 25:
-        fg_component = 75
-    elif fg_value >= 75:
-        fg_component = 25
-    else:
-        fg_component = 50 + (50 - fg_value) * 0.5
+    """
+    Overall market score (0–100) from four weighted inputs:
+      Fear & Greed 40% | Advancing ratio 25% | BTC dom trend 20% | Avg 24h change 15%
+    """
+    reasons: list[str] = []
+    coins = list(coins_cache.values())
 
-    score = round(fg_component)
+    # ── Fear & Greed (40%) — high greed is bearish ────────────────────────────
+    if fg_value <= 20:
+        fg_score = 72
+        reasons.append(f"Extreme fear ({fg_value}) — contrarian buy signal")
+    elif fg_value <= 40:
+        fg_score = 62
+        reasons.append(f"Fear at {fg_value} — depressed market sentiment")
+    elif fg_value <= 60:
+        fg_score = 50
+        reasons.append(f"Neutral sentiment at {fg_value}")
+    elif fg_value <= 80:
+        fg_score = 35
+        reasons.append(f"Greed at {fg_value} — elevated risk")
+    else:
+        fg_score = 22
+        reasons.append(f"Extreme greed ({fg_value}) — caution warranted")
+
+    # ── Advancing / declining ratio (25%) ─────────────────────────────────────
+    changes_24h = [c.get("price_change_percentage_24h") or 0.0 for c in coins]
+    total = len(changes_24h) or 1
+    advancing = sum(1 for ch in changes_24h if ch > 0)
+    adv_ratio = advancing / total
+    adv_score = adv_ratio * 100
+    if adv_ratio >= 0.7:
+        reasons.append(f"Broad advance — {advancing}/{total} coins up today")
+    elif adv_ratio <= 0.3:
+        reasons.append(f"Broad decline — only {advancing}/{total} coins up today")
+
+    # ── BTC dominance trend proxy (20%) ───────────────────────────────────────
+    # If BTC 7d > market avg 7d, BTC is gaining dominance (defensive rotation).
+    changes_7d = [c.get("price_change_percentage_7d_in_currency") or 0.0 for c in coins]
+    avg_7d = sum(changes_7d) / len(changes_7d) if changes_7d else 0.0
+    btc_7d = coins_cache.get("bitcoin", {}).get("price_change_percentage_7d_in_currency") or 0.0
+    btc_dom_delta = btc_7d - avg_7d
+    if btc_dom_delta > 5:
+        dom_score = 32
+        reasons.append("BTC outperforming market — defensive rotation")
+    elif btc_dom_delta >= 0:
+        dom_score = 45
+    elif btc_dom_delta > -5:
+        dom_score = 55
+    else:
+        dom_score = 65
+        reasons.append("BTC underperforming — risk-on altcoin sentiment")
+
+    # ── Avg 24h change (15%) ──────────────────────────────────────────────────
+    avg_24h = sum(changes_24h) / total
+    if avg_24h > 5:
+        momentum_score = 72
+        reasons.append(f"Strong momentum (+{avg_24h:.1f}% avg 24h)")
+    elif avg_24h > 2:
+        momentum_score = 62
+    elif avg_24h >= 0:
+        momentum_score = 53
+    elif avg_24h > -2:
+        momentum_score = 47
+    elif avg_24h > -5:
+        momentum_score = 38
+        reasons.append(f"Negative momentum ({avg_24h:.1f}% avg 24h)")
+    else:
+        momentum_score = 28
+        reasons.append(f"Broad sell-off ({avg_24h:.1f}% avg 24h)")
+
+    score = round(fg_score * 0.40 + adv_score * 0.25 + dom_score * 0.20 + momentum_score * 0.15)
+    score = max(0, min(100, score))
 
     if score >= 60:
         verdict, label = "buy", "Buy"
     elif score >= 40:
         verdict, label = "neutral", "Neutral"
-    else:
+    elif score >= 20:
         verdict, label = "caution", "Cautious"
+    else:
+        verdict, label = "sell", "Sell"
 
     return {
         "score": score,
         "verdict": verdict,
         "verdict_label": label,
-        "reasons": ["Market score detail coming in Phase 2"],
+        "reasons": reasons[:3],
     }
 
 
@@ -156,11 +220,15 @@ def _feargreed_interpretation(value: int, trend: int) -> str:
         base = "The market is in extreme fear territory."
 
     if trend > 10:
-        context = " Sentiment has risen sharply recently — historically a warning sign."
+        context = " Sentiment has risen sharply over the past week — historically a warning sign for near-term corrections."
+    elif trend > 3:
+        context = " Sentiment has been creeping higher — watch for overextension."
     elif trend < -10:
-        context = " Sentiment has dropped notably — could indicate a capitulation opportunity."
+        context = " Sentiment has dropped sharply — could indicate capitulation and a potential buying opportunity."
+    elif trend < -3:
+        context = " Sentiment is fading — market confidence is softening."
     else:
-        context = " Sentiment has been relatively stable."
+        context = " Sentiment has been relatively stable over the past week."
 
     return base + context
 
