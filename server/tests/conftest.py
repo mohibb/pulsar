@@ -61,10 +61,13 @@ def client(tmp_path, monkeypatch):
     import data
     import main
     import portfolio
+    import users
     from fastapi.testclient import TestClient
     from scheduler import scheduler
 
-    monkeypatch.setattr(portfolio, "PORTFOLIO_FILE", tmp_path / "portfolio.json")
+    # Redirect persistent storage to tmp_path so tests are isolated
+    monkeypatch.setattr(users, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(portfolio, "_PORTFOLIO_DIR", tmp_path)
 
     # Pre-populate caches so routes don't call external APIs
     data._coins_cache = MOCK_COINS.copy()
@@ -82,3 +85,11 @@ def client(tmp_path, monkeypatch):
     ):
         with TestClient(main.app) as c:
             yield c
+
+
+@pytest.fixture
+def auth_headers(client):
+    """Return Bearer auth headers for the seeded admin account."""
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}

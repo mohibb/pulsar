@@ -4,34 +4,61 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 import logging
-from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 
+from auth import create_token, decode_token
 from data import (
-    get_coins_cache,
-    get_ohlc,
-    get_feargreed_cache,
     get_coin_price,
+    get_coins_cache,
+    get_feargreed_cache,
+    get_ohlc,
     init_data,
     refresh_feargreed,
 )
 from indicators import compute_indicators, compute_signal
 from ml import get_ml_score
-from portfolio import load_portfolio, save_portfolio, reset_portfolio
+from portfolio import load_portfolio, reset_portfolio, save_portfolio
+from scheduler import scheduler
+from users import authenticate, create_user, delete_user, list_users, seed_admin
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
+_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+def get_current_user(token: str = Depends(_oauth2)) -> dict:
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(401, "Invalid or expired token", headers={"WWW-Authenticate": "Bearer"})
+    return {"username": payload["sub"], "is_admin": payload.get("admin", False)}
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if not user["is_admin"]:
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+# ── App lifecycle ─────────────────────────────────────────────────────────────
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up — fetching initial data…")
+    logger.info("Starting up…")
+    seed_admin()
     init_data()
     await refresh_feargreed()
-    from scheduler import scheduler
+
+    import asyncio
 
     scheduler.add_job(
         __import__("data").refresh_coins,
@@ -47,8 +74,6 @@ async def lifespan(app: FastAPI):
         id="refresh_ohlc",
         replace_existing=True,
     )
-    import asyncio
-
     scheduler.add_job(
         lambda: asyncio.ensure_future(refresh_feargreed()),
         "interval",
@@ -56,11 +81,25 @@ async def lifespan(app: FastAPI):
         id="refresh_feargreed",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _refresh_ml,
+        "interval",
+        hours=6,
+        id="refresh_ml",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info("Scheduler started")
     yield
     scheduler.shutdown(wait=False)
     logger.info("Scheduler stopped")
+
+
+def _refresh_ml() -> None:
+    from data import _ohlc_cache
+    from ml import refresh_ml_scores
+
+    refresh_ml_scores(_ohlc_cache)
 
 
 app = FastAPI(title="Pulsar", lifespan=lifespan)
@@ -73,16 +112,15 @@ app.add_middleware(
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _build_coin_response(raw: dict) -> dict:
+def _build_coin(raw: dict) -> dict:
     coin_id = raw["id"]
     ohlc = get_ohlc(coin_id)
-    indicators = compute_indicators(ohlc) if ohlc else None
+    indics = compute_indicators(ohlc) if ohlc else None
     change_7d = raw.get("price_change_percentage_7d_in_currency") or 0.0
-    signal_data = compute_signal(indicators, change_7d)
-
+    sig = compute_signal(indics, change_7d)
     return {
         "id": coin_id,
         "symbol": raw["symbol"],
@@ -94,43 +132,36 @@ def _build_coin_response(raw: dict) -> dict:
         "volume_24h": raw["total_volume"],
         "change_24h": raw.get("price_change_percentage_24h") or 0.0,
         "change_7d": change_7d,
-        "indicators": indicators,
-        "signal": signal_data["signal"],
-        "signal_reasons": signal_data["reasons"],
+        "indicators": indics,
+        "signal": sig["signal"],
+        "signal_reasons": sig["reasons"],
     }
 
 
-def _composite_score(signal_score: float, ml_score) -> tuple[float, str, str]:
-    if ml_score is not None:
-        score = signal_score * 0.6 + ml_score * 0.4
-    else:
-        score = float(signal_score)
-
+def _composite(signal_score: float, ml_score) -> tuple[float, str, str]:
+    score = signal_score * 0.6 + ml_score * 0.4 if ml_score is not None else float(signal_score)
     if score >= 60:
-        verdict, label = "buy", "Buy"
-    elif score >= 40:
-        verdict, label = "hold", "Hold"
-    else:
-        verdict, label = "sell", "Sell"
-
-    return score, verdict, label
+        return score, "buy", "Buy"
+    if score >= 40:
+        return score, "hold", "Hold"
+    return score, "sell", "Sell"
 
 
-def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
+def _market_score(fg_value: int, coins_cache: dict) -> dict:
     """
-    Overall market score (0–100) from four weighted inputs:
-      Fear & Greed 40% | Advancing ratio 25% | BTC dom trend 20% | Avg 24h change 15%
+    Overall market score (0–100):
+      Fear & Greed 40% | Advancing ratio 25% | BTC dom trend 20% | Avg 24h 15%
     """
     reasons: list[str] = []
     coins = list(coins_cache.values())
 
-    # ── Fear & Greed (40%) — high greed is bearish ────────────────────────────
+    # Fear & Greed (40%)
     if fg_value <= 20:
         fg_score = 72
         reasons.append(f"Extreme fear ({fg_value}) — contrarian buy signal")
     elif fg_value <= 40:
         fg_score = 62
-        reasons.append(f"Fear at {fg_value} — depressed market sentiment")
+        reasons.append(f"Fear at {fg_value} — depressed sentiment")
     elif fg_value <= 60:
         fg_score = 50
         reasons.append(f"Neutral sentiment at {fg_value}")
@@ -141,7 +172,7 @@ def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
         fg_score = 22
         reasons.append(f"Extreme greed ({fg_value}) — caution warranted")
 
-    # ── Advancing / declining ratio (25%) ─────────────────────────────────────
+    # Advancing / declining ratio (25%)
     changes_24h = [c.get("price_change_percentage_24h") or 0.0 for c in coins]
     total = len(changes_24h) or 1
     advancing = sum(1 for ch in changes_24h if ch > 0)
@@ -152,15 +183,14 @@ def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
     elif adv_ratio <= 0.3:
         reasons.append(f"Broad decline — only {advancing}/{total} coins up today")
 
-    # ── BTC dominance trend proxy (20%) ───────────────────────────────────────
-    # If BTC 7d > market avg 7d, BTC is gaining dominance (defensive rotation).
+    # BTC dominance trend proxy (20%)
     changes_7d = [c.get("price_change_percentage_7d_in_currency") or 0.0 for c in coins]
     avg_7d = sum(changes_7d) / len(changes_7d) if changes_7d else 0.0
     btc_7d = coins_cache.get("bitcoin", {}).get("price_change_percentage_7d_in_currency") or 0.0
     btc_dom_delta = btc_7d - avg_7d
     if btc_dom_delta > 5:
         dom_score = 32
-        reasons.append("BTC outperforming market — defensive rotation")
+        reasons.append("BTC outperforming — defensive rotation")
     elif btc_dom_delta >= 0:
         dom_score = 45
     elif btc_dom_delta > -5:
@@ -169,7 +199,7 @@ def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
         dom_score = 65
         reasons.append("BTC underperforming — risk-on altcoin sentiment")
 
-    # ── Avg 24h change (15%) ──────────────────────────────────────────────────
+    # Avg 24h change (15%)
     avg_24h = sum(changes_24h) / total
     if avg_24h > 5:
         momentum_score = 72
@@ -199,15 +229,10 @@ def _feargreed_market_score(fg_value: int, coins_cache: dict) -> dict:
     else:
         verdict, label = "sell", "Sell"
 
-    return {
-        "score": score,
-        "verdict": verdict,
-        "verdict_label": label,
-        "reasons": reasons[:3],
-    }
+    return {"score": score, "verdict": verdict, "verdict_label": label, "reasons": reasons[:3]}
 
 
-def _feargreed_interpretation(value: int, trend: int) -> str:
+def _fg_interpretation(value: int, trend: int) -> str:
     if value >= 75:
         base = "The market is in extreme greed territory."
     elif value >= 55:
@@ -220,201 +245,48 @@ def _feargreed_interpretation(value: int, trend: int) -> str:
         base = "The market is in extreme fear territory."
 
     if trend > 10:
-        context = " Sentiment has risen sharply over the past week — historically a warning sign for near-term corrections."
+        ctx = " Sentiment has risen sharply over the past week — historically a warning sign."
     elif trend > 3:
-        context = " Sentiment has been creeping higher — watch for overextension."
+        ctx = " Sentiment has been creeping higher — watch for overextension."
     elif trend < -10:
-        context = " Sentiment has dropped sharply — could indicate capitulation and a potential buying opportunity."
+        ctx = " Sentiment has dropped sharply — could indicate capitulation."
     elif trend < -3:
-        context = " Sentiment is fading — market confidence is softening."
+        ctx = " Sentiment is fading — market confidence is softening."
     else:
-        context = " Sentiment has been relatively stable over the past week."
+        ctx = " Sentiment has been relatively stable."
 
-    return base + context
-
-
-# ── Routes ───────────────────────────────────────────────────────────────────
+    return base + ctx
 
 
-@app.get("/api/coins")
-def api_coins():
-    cache, ts = get_coins_cache()
-    if not cache:
-        raise HTTPException(503, "Coin data not yet available")
-    coins = [_build_coin_response(raw) for raw in cache.values()]
-    return {
-        "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
-        "coins": coins,
-    }
-
-
-@app.get("/api/market")
-def api_market():
-    cache, _ = get_coins_cache()
-    if not cache:
-        raise HTTPException(503, "Coin data not yet available")
-
-    coins = list(cache.values())
-    total_market_cap = sum(c.get("market_cap") or 0 for c in coins)
-    total_volume = sum(c.get("total_volume") or 0 for c in coins)
-
-    btc = cache.get("bitcoin", {})
-    eth = cache.get("ethereum", {})
-    btc_dom = (
-        round((btc.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
-    )
-    eth_dom = (
-        round((eth.get("market_cap") or 0) / total_market_cap * 100, 1) if total_market_cap else 0
-    )
-
-    changes = [c.get("price_change_percentage_24h") or 0.0 for c in coins]
-    advancing = sum(1 for ch in changes if ch > 0)
-    declining = sum(1 for ch in changes if ch < 0)
-    avg_change = round(sum(changes) / len(changes), 2) if changes else 0.0
-
-    return {
-        "total_market_cap": total_market_cap,
-        "total_volume_24h": total_volume,
-        "btc_dominance": btc_dom,
-        "eth_dominance": eth_dom,
-        "avg_change_24h": avg_change,
-        "advancing": advancing,
-        "declining": declining,
-    }
-
-
-@app.get("/api/feargreed")
-async def api_feargreed():
-    cache, ts = get_feargreed_cache()
-    if not cache:
-        await refresh_feargreed()
-        cache, ts = get_feargreed_cache()
-    if not cache:
-        raise HTTPException(503, "Fear & Greed data not yet available")
-
-    data_points = cache.get("data", [])
-    if not data_points:
-        raise HTTPException(503, "Fear & Greed data empty")
-
-    today = data_points[0]
-    value = int(today["value"])
-    classification = today["value_classification"]
-
-    yesterday_val = int(data_points[1]["value"]) if len(data_points) > 1 else value
-    last_week_val = int(data_points[6]["value"]) if len(data_points) > 6 else value
-    trend = value - yesterday_val
-
-    history = [
-        {
-            "date": dp.get("timestamp", ""),
-            "value": int(dp["value"]),
-            "classification": dp["value_classification"],
-        }
-        for dp in data_points
-    ]
-
+def _portfolio_response(username: str) -> dict:
+    portfolio = load_portfolio(username)
     coins_cache, _ = get_coins_cache()
-    market_score = _feargreed_market_score(value, coins_cache)
-    interpretation = _feargreed_interpretation(value, value - last_week_val)
-
-    return {
-        "value": value,
-        "classification": classification,
-        "yesterday": yesterday_val,
-        "last_week": last_week_val,
-        "trend": trend,
-        "history": history,
-        "interpretation": interpretation,
-        "market_score": market_score,
-    }
-
-
-@app.get("/api/history/{coin_id}")
-def api_history(coin_id: str):
-    ohlc = get_ohlc(coin_id)
-    if ohlc is None:
-        raise HTTPException(404, f"No history for {coin_id}")
-
-    data = [
-        {
-            "date": datetime.fromtimestamp(candle[0] / 1000, tz=timezone.utc).date().isoformat(),
-            "open": candle[1],
-            "high": candle[2],
-            "low": candle[3],
-            "close": candle[4],
-        }
-        for candle in ohlc
-    ]
-    return {"coin_id": coin_id, "days": 90, "data": data}
-
-
-@app.get("/api/signals")
-def api_signals():
-    cache, ts = get_coins_cache()
-    if not cache:
-        raise HTTPException(503, "Coin data not yet available")
-
-    signals = []
-    for coin_id, raw in cache.items():
-        ohlc = get_ohlc(coin_id)
-        indicators = compute_indicators(ohlc) if ohlc else None
-        change_7d = raw.get("price_change_percentage_7d_in_currency") or 0.0
-        sig = compute_signal(indicators, change_7d)
-        ml_score = get_ml_score(coin_id)
-        comp_score, comp_verdict, comp_label = _composite_score(sig["signal_score"], ml_score)
-
-        signals.append(
-            {
-                "coin_id": coin_id,
-                "symbol": raw["symbol"],
-                "signal": sig["signal"],
-                "signal_score": sig["signal_score"],
-                "ml_score": ml_score,
-                "composite_score": round(comp_score, 1),
-                "composite_verdict": comp_verdict,
-                "composite_label": comp_label,
-                "reasons": sig["reasons"],
-            }
-        )
-
-    return {
-        "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
-        "signals": signals,
-    }
-
-
-@app.get("/api/portfolio")
-def api_portfolio():
-    from data import get_coins_cache
-
-    portfolio = load_portfolio()
-    coins_cache, _ = get_coins_cache()
-
     holdings_list = []
-    total_holdings_value = 0.0
+    total_held = 0.0
 
     for coin_id, h in portfolio["holdings"].items():
         coin = coins_cache.get(coin_id, {})
-        current_price = coin.get("current_price") or h["avg_buy_price"]
-        value = h["amount"] * current_price
+        price = coin.get("current_price") or h["avg_buy_price"]
+        value = h["amount"] * price
         pnl = value - h["amount"] * h["avg_buy_price"]
-        pnl_pct = (current_price - h["avg_buy_price"]) / h["avg_buy_price"] * 100
-
+        pnl_pct = (price - h["avg_buy_price"]) / h["avg_buy_price"] * 100
         holdings_list.append(
             {
                 "coin_id": coin_id,
                 "symbol": coin.get("symbol", coin_id),
+                "name": coin.get("name", coin_id),
+                "image": coin.get("image"),
                 "amount": h["amount"],
                 "avg_buy_price": h["avg_buy_price"],
-                "current_price": current_price,
+                "current_price": price,
                 "value": round(value, 2),
                 "pnl": round(pnl, 2),
                 "pnl_pct": round(pnl_pct, 2),
             }
         )
-        total_holdings_value += value
+        total_held += value
 
-    total_value = portfolio["cash"] + total_holdings_value
+    total_value = portfolio["cash"] + total_held
     total_pnl = total_value - portfolio["initial_cash"]
     total_pnl_pct = total_pnl / portfolio["initial_cash"] * 100
 
@@ -429,33 +301,198 @@ def api_portfolio():
     }
 
 
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+
+@app.post("/api/auth/login")
+def api_login(body: dict):
+    user = authenticate(body.get("username", ""), body.get("password", ""))
+    if user is None:
+        raise HTTPException(401, "Invalid credentials")
+    token = create_token(user["username"], user["is_admin"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user["username"],
+        "is_admin": user["is_admin"],
+    }
+
+
+@app.get("/api/auth/users")
+def api_list_users(admin: dict = Depends(require_admin)):
+    return list_users()
+
+
+@app.post("/api/auth/users")
+def api_create_user(body: dict, admin: dict = Depends(require_admin)):
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username or not password:
+        raise HTTPException(400, "username and password are required")
+    try:
+        return create_user(username, password, admin["username"])
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.delete("/api/auth/users/{username}")
+def api_delete_user(username: str, admin: dict = Depends(require_admin)):
+    if not delete_user(username):
+        raise HTTPException(404, f"User '{username}' not found or cannot be deleted")
+    return {"deleted": username}
+
+
+# ── Public market routes ──────────────────────────────────────────────────────
+
+
+@app.get("/api/coins")
+def api_coins():
+    cache, ts = get_coins_cache()
+    if not cache:
+        raise HTTPException(503, "Coin data not yet available")
+    return {
+        "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+        "coins": [_build_coin(raw) for raw in cache.values()],
+    }
+
+
+@app.get("/api/market")
+def api_market():
+    cache, _ = get_coins_cache()
+    if not cache:
+        raise HTTPException(503, "Coin data not yet available")
+    coins = list(cache.values())
+    total_mc = sum(c.get("market_cap") or 0 for c in coins)
+    total_vol = sum(c.get("total_volume") or 0 for c in coins)
+    btc = cache.get("bitcoin", {})
+    eth = cache.get("ethereum", {})
+    btc_dom = round((btc.get("market_cap") or 0) / total_mc * 100, 1) if total_mc else 0
+    eth_dom = round((eth.get("market_cap") or 0) / total_mc * 100, 1) if total_mc else 0
+    changes = [c.get("price_change_percentage_24h") or 0.0 for c in coins]
+    return {
+        "total_market_cap": total_mc,
+        "total_volume_24h": total_vol,
+        "btc_dominance": btc_dom,
+        "eth_dominance": eth_dom,
+        "avg_change_24h": round(sum(changes) / len(changes), 2) if changes else 0.0,
+        "advancing": sum(1 for ch in changes if ch > 0),
+        "declining": sum(1 for ch in changes if ch < 0),
+    }
+
+
+@app.get("/api/feargreed")
+async def api_feargreed():
+    cache, ts = get_feargreed_cache()
+    if not cache:
+        await refresh_feargreed()
+        cache, ts = get_feargreed_cache()
+    if not cache:
+        raise HTTPException(503, "Fear & Greed data not available")
+    pts = cache.get("data", [])
+    if not pts:
+        raise HTTPException(503, "Fear & Greed data empty")
+    value = int(pts[0]["value"])
+    yesterday = int(pts[1]["value"]) if len(pts) > 1 else value
+    last_week = int(pts[6]["value"]) if len(pts) > 6 else value
+    history = [
+        {
+            "date": dp.get("timestamp", ""),
+            "value": int(dp["value"]),
+            "classification": dp["value_classification"],
+        }
+        for dp in pts
+    ]
+    coins_cache, _ = get_coins_cache()
+    return {
+        "value": value,
+        "classification": pts[0]["value_classification"],
+        "yesterday": yesterday,
+        "last_week": last_week,
+        "trend": value - yesterday,
+        "history": history,
+        "interpretation": _fg_interpretation(value, value - last_week),
+        "market_score": _market_score(value, coins_cache),
+    }
+
+
+@app.get("/api/history/{coin_id}")
+def api_history(coin_id: str):
+    ohlc = get_ohlc(coin_id)
+    if ohlc is None:
+        raise HTTPException(404, f"No history for {coin_id}")
+    data = [
+        {
+            "date": datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc).date().isoformat(),
+            "open": c[1],
+            "high": c[2],
+            "low": c[3],
+            "close": c[4],
+        }
+        for c in ohlc
+    ]
+    return {"coin_id": coin_id, "days": 90, "data": data}
+
+
+@app.get("/api/signals")
+def api_signals():
+    cache, ts = get_coins_cache()
+    if not cache:
+        raise HTTPException(503, "Coin data not yet available")
+    signals = []
+    for coin_id, raw in cache.items():
+        ohlc = get_ohlc(coin_id)
+        indics = compute_indicators(ohlc) if ohlc else None
+        change_7d = raw.get("price_change_percentage_7d_in_currency") or 0.0
+        sig = compute_signal(indics, change_7d)
+        ml = get_ml_score(coin_id)
+        comp, verdict, label = _composite(sig["signal_score"], ml)
+        signals.append(
+            {
+                "coin_id": coin_id,
+                "symbol": raw["symbol"],
+                "signal": sig["signal"],
+                "signal_score": sig["signal_score"],
+                "ml_score": ml,
+                "composite_score": round(comp, 1),
+                "composite_verdict": verdict,
+                "composite_label": label,
+                "reasons": sig["reasons"],
+            }
+        )
+    return {
+        "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+        "signals": signals,
+    }
+
+
+# ── Protected portfolio routes ────────────────────────────────────────────────
+
+
+@app.get("/api/portfolio")
+def api_portfolio(user: dict = Depends(get_current_user)):
+    return _portfolio_response(user["username"])
+
+
 @app.post("/api/portfolio/buy")
-def api_portfolio_buy(body: dict):
+def api_portfolio_buy(body: dict, user: dict = Depends(get_current_user)):
     coin_id = body.get("coin_id")
     usd_amount = float(body.get("usd_amount", 0))
-
     if usd_amount < 1:
         raise HTTPException(400, "Minimum trade is $1")
-
     price = get_coin_price(coin_id)
     if price is None:
         raise HTTPException(404, f"Unknown coin: {coin_id}")
-
-    portfolio = load_portfolio()
+    portfolio = load_portfolio(user["username"])
     if usd_amount > portfolio["cash"]:
         raise HTTPException(400, "Insufficient cash")
-
     amount = usd_amount / price
-    holding = portfolio["holdings"].get(coin_id)
-    if holding:
-        total_amount = holding["amount"] + amount
-        holding["avg_buy_price"] = (
-            holding["amount"] * holding["avg_buy_price"] + amount * price
-        ) / total_amount
-        holding["amount"] = total_amount
+    h = portfolio["holdings"].get(coin_id)
+    if h:
+        new_total = h["amount"] + amount
+        h["avg_buy_price"] = (h["amount"] * h["avg_buy_price"] + amount * price) / new_total
+        h["amount"] = new_total
     else:
         portfolio["holdings"][coin_id] = {"amount": amount, "avg_buy_price": price}
-
     portfolio["cash"] -= usd_amount
     portfolio["transactions"].append(
         {
@@ -468,53 +505,46 @@ def api_portfolio_buy(body: dict):
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
-    save_portfolio(portfolio)
-    return api_portfolio()
+    save_portfolio(user["username"], portfolio)
+    return _portfolio_response(user["username"])
 
 
 @app.post("/api/portfolio/sell")
-def api_portfolio_sell(body: dict):
+def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
     coin_id = body.get("coin_id")
     usd_amount = float(body.get("usd_amount", 0))
-
     if usd_amount < 1:
         raise HTTPException(400, "Minimum trade is $1")
-
     price = get_coin_price(coin_id)
     if price is None:
         raise HTTPException(404, f"Unknown coin: {coin_id}")
-
-    portfolio = load_portfolio()
-    holding = portfolio["holdings"].get(coin_id)
-    if not holding:
+    portfolio = load_portfolio(user["username"])
+    h = portfolio["holdings"].get(coin_id)
+    if not h:
         raise HTTPException(400, f"No holding for {coin_id}")
-
-    holding_value = holding["amount"] * price
-    if usd_amount > holding_value:
+    if usd_amount > h["amount"] * price:
         raise HTTPException(400, "Cannot sell more than current holding value")
-
-    amount_to_sell = usd_amount / price
-    holding["amount"] -= amount_to_sell
-    if holding["amount"] < 1e-10:
+    sell_amount = usd_amount / price
+    h["amount"] -= sell_amount
+    if h["amount"] < 1e-10:
         del portfolio["holdings"][coin_id]
-
     portfolio["cash"] += usd_amount
     portfolio["transactions"].append(
         {
             "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
             "type": "sell",
             "coin_id": coin_id,
-            "amount": amount_to_sell,
+            "amount": sell_amount,
             "price": price,
             "total": usd_amount,
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
-    save_portfolio(portfolio)
-    return api_portfolio()
+    save_portfolio(user["username"], portfolio)
+    return _portfolio_response(user["username"])
 
 
 @app.post("/api/portfolio/reset")
-def api_portfolio_reset():
-    reset_portfolio()
-    return api_portfolio()
+def api_portfolio_reset(user: dict = Depends(get_current_user)):
+    reset_portfolio(user["username"])
+    return _portfolio_response(user["username"])
