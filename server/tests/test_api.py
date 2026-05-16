@@ -305,6 +305,18 @@ def test_portfolio_reset(client, auth_headers):
     assert body["transactions"] == []
 
 
+def test_recommendation_requires_auth(client):
+    assert client.get("/api/portfolio/recommendation").status_code == 401
+
+
+def test_recommendation_empty_portfolio(client, auth_headers):
+    body = client.get("/api/portfolio/recommendation", headers=auth_headers).json()
+    assert "summary" in body
+    assert "recommendations" in body
+    assert "cash_pct" in body
+    assert isinstance(body["recommendations"], list)
+
+
 def test_users_portfolios_are_isolated(client, auth_headers):
     """Two different users should have independent portfolios."""
     # Admin buys bitcoin

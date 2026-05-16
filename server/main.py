@@ -29,6 +29,7 @@ from data import (
 from indicators import compute_indicators, compute_signal
 from ml import get_ml_score
 from portfolio import load_portfolio, reset_portfolio, save_portfolio
+from recommendation import recommend
 from scheduler import scheduler
 from users import authenticate, create_user, delete_user, list_users, seed_admin
 
@@ -560,6 +561,30 @@ def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
 def api_portfolio_reset(user: dict = Depends(get_current_user)):
     reset_portfolio(user["username"])
     return _portfolio_response(user["username"])
+
+
+@app.get("/api/portfolio/recommendation")
+def api_portfolio_recommendation(user: dict = Depends(get_current_user)):
+    portfolio = load_portfolio(user["username"])
+    coins_cache, _ = get_coins_cache()
+    signals: dict = {}
+    for coin_id, raw in coins_cache.items():
+        ohlc = get_ohlc(coin_id)
+        indics = compute_indicators(ohlc) if ohlc else None
+        change_7d = raw.get("price_change_percentage_7d_in_currency") or 0.0
+        sig = compute_signal(indics, change_7d)
+        ml = get_ml_score(coin_id)
+        comp, verdict, _label = _composite(sig["signal_score"], ml)
+        signals[coin_id] = {
+            "composite_score": round(comp, 1),
+            "composite_verdict": verdict,
+        }
+    total_held = sum(
+        h["amount"] * (coins_cache.get(cid, {}).get("current_price") or h["avg_buy_price"])
+        for cid, h in portfolio["holdings"].items()
+    )
+    total_value = portfolio["cash"] + total_held
+    return recommend(portfolio, coins_cache, signals, total_value)
 
 
 # Serve the frontend — mounted last so /api/* routes always take priority
