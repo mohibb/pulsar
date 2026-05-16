@@ -121,6 +121,11 @@ def _build_coin(raw: dict) -> dict:
     indics = compute_indicators(ohlc) if ohlc else None
     change_7d = raw.get("price_change_percentage_7d_in_currency") or 0.0
     sig = compute_signal(indics, change_7d)
+
+    price_history_7d: list[float] = []
+    if ohlc:
+        price_history_7d = [c[4] for c in sorted(ohlc, key=lambda c: c[0])[-7:]]
+
     return {
         "id": coin_id,
         "symbol": raw["symbol"],
@@ -132,6 +137,7 @@ def _build_coin(raw: dict) -> dict:
         "volume_24h": raw["total_volume"],
         "change_24h": raw.get("price_change_percentage_24h") or 0.0,
         "change_7d": change_7d,
+        "price_history_7d": price_history_7d,
         "indicators": indics,
         "signal": sig["signal"],
         "signal_reasons": sig["reasons"],

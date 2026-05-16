@@ -28,8 +28,17 @@ def test_coins_fields(client):
         "change_24h",
         "change_7d",
         "signal",
+        "price_history_7d",
     ):
         assert key in coin
+
+
+def test_coins_price_history_7d(client):
+    coin = client.get("/api/coins").json()["coins"][0]
+    hist = coin["price_history_7d"]
+    assert isinstance(hist, list)
+    assert 1 <= len(hist) <= 7
+    assert all(isinstance(p, float) for p in hist)
 
 
 # ── /api/market ───────────────────────────────────────────────────────────────
@@ -127,7 +136,8 @@ def test_signals_shape(client):
         assert key in sig
 
 
-def test_signals_ml_score_null_before_phase4(client):
+def test_signals_ml_score_null_until_trained(client):
+    # Scheduler is mocked so refresh_ml_scores is never called in tests
     signals = client.get("/api/signals").json()["signals"]
     assert all(s["ml_score"] is None for s in signals)
 

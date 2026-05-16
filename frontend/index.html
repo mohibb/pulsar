@@ -346,6 +346,23 @@ function signalTag(sig) {
   return `<span class="tag ${cls}">${label}</span>`;
 }
 
+function sparkline(prices, w = 64, h = 28) {
+  if (!prices || prices.length < 2) return '';
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  const pts = prices.map((p, i) => {
+    const x = (i / (prices.length - 1)) * w;
+    const y = h - ((p - min) / range) * (h - 2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const up = prices[prices.length - 1] >= prices[0];
+  const stroke = up ? '#4ade80' : '#f87171';
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display:block">` +
+    `<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.5" ` +
+    `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
 // ── Market tab ────────────────────────────────────────────────────────────────
 async function loadMarket() {
   const res = await apiFetch('/api/market');
@@ -441,9 +458,9 @@ async function loadCoins() {
             </div>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
+            ${sparkline(c.price_history_7d)}
             ${signalTag(c.signal)}
             <span class="text-xs">${fmtPct(c.change_24h)}</span>
-            <span class="text-xs text-slate-500">7d ${fmtPct(c.change_7d)}</span>
           </div>
         </div>
         <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-center">
@@ -461,7 +478,7 @@ async function loadCoins() {
           </div>
         </div>
         <div class="mt-2 text-xs text-slate-500">
-          Cap ${fmtLarge(c.market_cap)} &nbsp;·&nbsp; Vol ${fmtLarge(c.volume_24h)}
+          7d ${fmtPct(c.change_7d)} &nbsp;·&nbsp; Cap ${fmtLarge(c.market_cap)} &nbsp;·&nbsp; Vol ${fmtLarge(c.volume_24h)}
         </div>
       </div>`;
   }).join('');
