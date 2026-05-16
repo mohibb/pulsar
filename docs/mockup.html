@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PULSAR — Mockup</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #060810; color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+
+    /* ── Layout helpers ── */
+    .screen-label {
+      background: #1e2230; color: #64748b; font-size: 10px; letter-spacing: .12em;
+      text-transform: uppercase; padding: 6px 16px; border-bottom: 1px solid #0d0f14;
+    }
+    .screen { margin-bottom: 48px; }
+
+    /* ── Core components ── */
+    .card { background: #141720; border: 1px solid #1e2230; border-radius: 12px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+
+    /* ── Navbar ── */
+    .navbar {
+      background: rgba(13,15,20,0.97); border-bottom: 1px solid #1e2230;
+      height: 56px; display: flex; align-items: center;
+    }
+    .navbar .wrap { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+    .navbar-brand { color: #a78bfa; font-weight: 700; font-size: 18px; letter-spacing: .18em; }
+    .navbar-right { display: flex; align-items: center; gap: 12px; }
+    .nav-user { color: #64748b; font-size: 12px; }
+
+    /* ── Tabs ── */
+    .tabbar { border-bottom: 1px solid #1e2230; }
+    .tabbar .wrap { display: flex; gap: 4px; }
+    .tab { padding: 10px 16px; border-bottom: 2px solid transparent; color: #64748b; font-size: 13px; cursor: default; }
+    .tab.active { border-bottom-color: #a78bfa; color: #a78bfa; }
+
+    /* ── Buttons ── */
+    .btn { display: inline-block; border-radius: 8px; padding: 7px 18px; font-size: 13px; font-weight: 600; cursor: default; font-family: inherit; border: none; }
+    .btn-primary { background: #a78bfa; color: #0d0f14; }
+    .btn-danger  { background: #ef4444; color: #fff; }
+    .btn-ghost   { background: transparent; border: 1px solid #1e2230; color: #94a3b8; }
+    .btn-sm      { padding: 4px 12px; font-size: 11px; }
+
+    /* ── Tags ── */
+    .tag { display: inline-flex; align-items: center; border-radius: 9999px; padding: 2px 10px; font-size: 10px; font-weight: 700; letter-spacing: .06em; white-space: nowrap; }
+    .tag-strong-buy { background: rgba(16,185,129,.15); color: #34d399; }
+    .tag-buy        { background: rgba(34,197,94,.15);  color: #4ade80; }
+    .tag-neutral    { background: rgba(148,163,184,.15);color: #94a3b8; }
+    .tag-caution    { background: rgba(251,191,36,.15); color: #fbbf24; }
+    .tag-sell       { background: rgba(239,68,68,.15);  color: #f87171; }
+    .tag-hold       { background: rgba(99,102,241,.15); color: #818cf8; }
+
+    /* ── Colour helpers ── */
+    .pos { color: #4ade80; }
+    .neg { color: #f87171; }
+    .muted { color: #64748b; }
+    .brand { color: #a78bfa; }
+
+    /* ── Stats grid ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .stat-label { color: #64748b; font-size: 11px; margin-bottom: 4px; }
+    .stat-value { font-weight: 600; font-size: 14px; }
+
+    /* ── Market layout ── */
+    .market-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; }
+
+    /* ── Coin card ── */
+    .coin-card { padding: 16px; }
+    .coin-header { display: flex; align-items: flex-start; justify-content: space-between; }
+    .coin-left { display: flex; align-items: center; gap: 12px; }
+    .coin-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+    .coin-right { display: flex; align-items: center; gap: 8px; }
+    .ind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; text-align: center; }
+    .ind-cell { background: #0d0f14; border-radius: 8px; padding: 8px; }
+    .ind-label { color: #64748b; font-size: 10px; margin-bottom: 2px; }
+    .ind-val { font-weight: 600; font-size: 13px; }
+    .coin-footer { margin-top: 8px; font-size: 11px; color: #64748b; }
+
+    /* ── F&G gauge ── */
+    .fg-card { padding: 20px; display: flex; flex-direction: column; align-items: center; }
+    .fg-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 16px; align-self: flex-start; }
+    .fg-value { font-size: 40px; font-weight: 700; margin-top: -10px; }
+    .fg-class { font-size: 14px; font-weight: 600; margin-top: 4px; }
+    .fg-interp { font-size: 11px; color: #64748b; text-align: center; margin-top: 12px; max-width: 200px; line-height: 1.5; }
+    .fg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; width: 100%; text-align: center; }
+    .fg-sub-label { font-size: 11px; color: #64748b; }
+    .fg-sub-val { font-weight: 600; font-size: 14px; margin-top: 2px; }
+    .score-bar-wrap { margin-top: 16px; width: 100%; }
+    .score-bar-track { background: #1e2230; border-radius: 9999px; height: 6px; flex: 1; overflow: hidden; }
+    .score-bar-fill  { background: #a78bfa; border-radius: 9999px; height: 6px; transition: width .5s; }
+    .score-bar-row   { display: flex; align-items: center; gap: 8px; }
+    .score-reasons { margin-top: 8px; font-size: 11px; color: #94a3b8; line-height: 1.8; }
+
+    /* ── Table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { color: #64748b; font-weight: 600; text-align: left; padding: 8px 12px; border-bottom: 1px solid #1e2230; }
+    td { padding: 8px 12px; border-bottom: 1px solid #0d0f14; }
+    tr:last-child td { border-bottom: none; }
+
+    /* ── Login ── */
+    .login-wrap { display: flex; align-items: center; justify-content: center; padding: 48px 16px; background: #0d0f14; }
+    .login-card { width: 100%; max-width: 360px; padding: 32px; }
+    .login-title { color: #a78bfa; font-size: 32px; font-weight: 700; letter-spacing: .2em; text-align: center; }
+    .login-sub { color: #64748b; font-size: 11px; text-align: center; margin-top: 4px; margin-bottom: 24px; }
+    .form-label { font-size: 11px; color: #94a3b8; display: block; margin-bottom: 6px; }
+    .form-input {
+      width: 100%; background: #0d0f14; border: 1px solid #1e2230; border-radius: 8px;
+      padding: 9px 12px; color: #e2e8f0; font-family: inherit; font-size: 13px; outline: none;
+    }
+    .form-group { margin-bottom: 16px; }
+
+    /* ── Portfolio hero ── */
+    .pf-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 20px; }
+
+    /* ── Trade panel ── */
+    .trade-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .trade-msg { color: #4ade80; font-size: 13px; display: flex; align-items: center; }
+
+    /* ── Spacing ── */
+    .mt4 { margin-top: 4px; }
+    .mt8 { margin-top: 8px; }
+    .mt16 { margin-top: 16px; }
+    .mt24 { margin-top: 24px; }
+    .p16 { padding: 16px; }
+    .p20 { padding: 20px; }
+    .gap8 { gap: 8px; }
+    .flex { display: flex; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .space-y > * + * { margin-top: 16px; }
+    .section-header {
+      padding: 12px 20px; border-bottom: 1px solid #1e2230;
+      font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .1em;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .divider { border: none; border-top: 1px solid #1e2230; }
+    .content-pad { padding: 24px 0; }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     SCREEN 1 — LOGIN
+════════════════════════════════════════════════════════════════ -->
+<div class="screen">
+  <div class="screen-label">Screen 1 — Login</div>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="login-title">PULSAR</div>
+      <div class="login-sub">Crypto Intelligence Dashboard</div>
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input class="form-input" type="text" value="mohibb" readonly />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="password" value="••••••••" readonly />
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:8px">Sign In</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     SCREEN 2 — MARKET TAB
+════════════════════════════════════════════════════════════════ -->
+<div class="screen">
+  <div class="screen-label">Screen 2 — Market tab (admin view)</div>
+
+  <!-- Navbar -->
+  <div class="navbar">
+    <div class="wrap">
+      <span class="navbar-brand">PULSAR</span>
+      <div class="navbar-right">
+        <span class="nav-user">mohibb</span>
+        <span class="tag tag-buy">ADMIN</span>
+        <button class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabbar">
+    <div class="wrap">
+      <div class="tab active">Market</div>
+      <div class="tab">Signals</div>
+      <div class="tab">Portfolio</div>
+      <div class="tab">Admin</div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="wrap content-pad space-y">
+
+    <!-- Stats bar -->
+    <div class="card p20">
+      <div class="stats-grid">
+        <div>
+          <div class="stat-label">Market Cap</div>
+          <div class="stat-value">$2.41T</div>
+        </div>
+        <div>
+          <div class="stat-label">24h Volume</div>
+          <div class="stat-value">$98.3B</div>
+        </div>
+        <div>
+          <div class="stat-label">BTC Dom</div>
+          <div class="stat-value">54.2%</div>
+        </div>
+        <div>
+          <div class="stat-label">Advancing / Declining</div>
+          <div class="stat-value"><span class="pos">7</span> <span class="muted">/</span> <span class="neg">3</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- F&G + coins -->
+    <div class="market-grid">
+
+      <!-- Fear & Greed -->
+      <div class="card fg-card">
+        <div class="fg-label">Fear &amp; Greed Index</div>
+
+        <!-- Half-circle gauge (value = 72, Greed → green) -->
+        <svg viewBox="0 0 160 90" width="192">
+          <path d="M10,80 A70,70 0 0,1 150,80" fill="none" stroke="#1e2230" stroke-width="12" stroke-linecap="round"/>
+          <path d="M10,80 A70,70 0 0,1 150,80" fill="none" stroke="#4ade80" stroke-width="12" stroke-linecap="round"
+                stroke-dasharray="220" stroke-dashoffset="62"/>
+        </svg>
+
+        <div class="fg-value" style="color:#4ade80">72</div>
+        <div class="fg-class" style="color:#4ade80">Greed</div>
+        <div class="fg-interp">The market is showing greed. Sentiment has been creeping higher — watch for overextension.</div>
+
+        <div class="fg-row">
+          <div><div class="fg-sub-label">Yesterday</div><div class="fg-sub-val">68</div></div>
+          <div><div class="fg-sub-label">Last week</div><div class="fg-sub-val">55</div></div>
+        </div>
+
+        <div class="score-bar-wrap">
+          <div class="fg-sub-label" style="margin-bottom:8px">Market Score</div>
+          <div class="score-bar-row">
+            <div class="score-bar-track">
+              <div class="score-bar-fill" style="width:44%"></div>
+            </div>
+            <span class="brand" style="font-size:12px;font-weight:600">44</span>
+            <span class="tag tag-neutral">NEUTRAL</span>
+          </div>
+          <div class="score-reasons">
+            · Greed at 72 — elevated risk<br>
+            · Broad advance — 7/10 coins up today<br>
+            · Strong momentum (+3.2% avg 24h)
+          </div>
+        </div>
+      </div>
+
+      <!-- Coin list -->
+      <div class="space-y">
+
+        <!-- Bitcoin -->
+        <div class="card coin-card">
+          <div class="coin-header">
+            <div class="coin-left">
+              <div class="coin-icon" style="background:#f7931a22;color:#f7931a">₿</div>
+              <div>
+                <div style="font-weight:600">Bitcoin <span class="muted" style="font-size:11px">BTC</span></div>
+                <div style="color:#94a3b8;font-size:13px">$67,420</div>
+              </div>
+            </div>
+            <div class="coin-right">
+              <!-- sparkline (uptrend) -->
+              <svg viewBox="0 0 64 28" width="64" height="28">
+                <polyline points="0,24 10,20 21,22 32,14 43,10 53,12 64,5"
+                  fill="none" stroke="#4ade80" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              </svg>
+              <span class="tag tag-buy">BUY</span>
+              <span class="pos" style="font-size:12px">+2.41%</span>
+            </div>
+          </div>
+          <div class="ind-grid">
+            <div class="ind-cell">
+              <div class="ind-label">RSI-14</div>
+              <div class="ind-val">58.4</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">MACD Hist</div>
+              <div class="ind-val pos">124.3</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">BB Pos</div>
+              <div class="ind-val">67%</div>
+            </div>
+          </div>
+          <div class="coin-footer">7d <span class="pos">+5.12%</span> &nbsp;·&nbsp; Cap $1.33T &nbsp;·&nbsp; Vol $34.2B</div>
+        </div>
+
+        <!-- Ethereum -->
+        <div class="card coin-card">
+          <div class="coin-header">
+            <div class="coin-left">
+              <div class="coin-icon" style="background:#627eea22;color:#627eea">Ξ</div>
+              <div>
+                <div style="font-weight:600">Ethereum <span class="muted" style="font-size:11px">ETH</span></div>
+                <div style="color:#94a3b8;font-size:13px">$3,512</div>
+              </div>
+            </div>
+            <div class="coin-right">
+              <!-- sparkline (slight uptrend) -->
+              <svg viewBox="0 0 64 28" width="64" height="28">
+                <polyline points="0,18 10,22 21,16 32,18 43,12 53,14 64,10"
+                  fill="none" stroke="#4ade80" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              </svg>
+              <span class="tag tag-neutral">NEUTRAL</span>
+              <span class="pos" style="font-size:12px">+1.50%</span>
+            </div>
+          </div>
+          <div class="ind-grid">
+            <div class="ind-cell">
+              <div class="ind-label">RSI-14</div>
+              <div class="ind-val">52.1</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">MACD Hist</div>
+              <div class="ind-val pos">18.7</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">BB Pos</div>
+              <div class="ind-val">54%</div>
+            </div>
+          </div>
+          <div class="coin-footer">7d <span class="pos">+2.30%</span> &nbsp;·&nbsp; Cap $422B &nbsp;·&nbsp; Vol $15.0B</div>
+        </div>
+
+        <!-- Solana -->
+        <div class="card coin-card">
+          <div class="coin-header">
+            <div class="coin-left">
+              <div class="coin-icon" style="background:#9945ff22;color:#9945ff">◎</div>
+              <div>
+                <div style="font-weight:600">Solana <span class="muted" style="font-size:11px">SOL</span></div>
+                <div style="color:#94a3b8;font-size:13px">$182.40</div>
+              </div>
+            </div>
+            <div class="coin-right">
+              <!-- sparkline (downtrend) -->
+              <svg viewBox="0 0 64 28" width="64" height="28">
+                <polyline points="0,4 10,8 21,6 32,12 43,16 53,20 64,24"
+                  fill="none" stroke="#f87171" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              </svg>
+              <span class="tag tag-caution">CAUTION</span>
+              <span class="neg" style="font-size:12px">-3.21%</span>
+            </div>
+          </div>
+          <div class="ind-grid">
+            <div class="ind-cell">
+              <div class="ind-label">RSI-14</div>
+              <div class="ind-val neg">71.8</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">MACD Hist</div>
+              <div class="ind-val neg">-42.1</div>
+            </div>
+            <div class="ind-cell">
+              <div class="ind-label">BB Pos</div>
+              <div class="ind-val">82%</div>
+            </div>
+          </div>
+          <div class="coin-footer">7d <span class="neg">-8.40%</span> &nbsp;·&nbsp; Cap $86.2B &nbsp;·&nbsp; Vol $4.1B</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     SCREEN 3 — SIGNALS TAB
+════════════════════════════════════════════════════════════════ -->
+<div class="screen">
+  <div class="screen-label">Screen 3 — Signals tab</div>
+
+  <div class="navbar">
+    <div class="wrap">
+      <span class="navbar-brand">PULSAR</span>
+      <div class="navbar-right">
+        <span class="nav-user">mohibb</span>
+        <span class="tag tag-buy">ADMIN</span>
+        <button class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </div>
+  </div>
+  <div class="tabbar">
+    <div class="wrap">
+      <div class="tab">Market</div>
+      <div class="tab active">Signals</div>
+      <div class="tab">Portfolio</div>
+      <div class="tab">Admin</div>
+    </div>
+  </div>
+
+  <div class="wrap content-pad">
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Coin</th>
+            <th>Signal</th>
+            <th>Score</th>
+            <th>ML Score</th>
+            <th>Composite</th>
+            <th>Reasons</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="font-weight:600">BTC</td>
+            <td><span class="tag tag-buy">BUY</span></td>
+            <td>63</td>
+            <td>71</td>
+            <td><span class="tag tag-buy">BUY</span> <span class="muted" style="font-size:11px;margin-left:4px">66</span></td>
+            <td style="color:#94a3b8;font-size:11px">MACD bullish cross · RSI neutral zone · Positive 7d momentum</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">ETH</td>
+            <td><span class="tag tag-neutral">NEUTRAL</span></td>
+            <td>51</td>
+            <td>54</td>
+            <td><span class="tag tag-hold">HOLD</span> <span class="muted" style="font-size:11px;margin-left:4px">52</span></td>
+            <td style="color:#94a3b8;font-size:11px">RSI neutral · MACD histogram flattening · BB mid-band</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">SOL</td>
+            <td><span class="tag tag-caution">CAUTION</span></td>
+            <td>34</td>
+            <td>29</td>
+            <td><span class="tag tag-sell">SELL</span> <span class="muted" style="font-size:11px;margin-left:4px">32</span></td>
+            <td style="color:#94a3b8;font-size:11px">RSI overbought (71.8) · Bearish MACD hist · Near BB upper</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">BNB</td>
+            <td><span class="tag tag-neutral">NEUTRAL</span></td>
+            <td>48</td>
+            <td>52</td>
+            <td><span class="tag tag-hold">HOLD</span> <span class="muted" style="font-size:11px;margin-left:4px">50</span></td>
+            <td style="color:#94a3b8;font-size:11px">RSI neutral · Slight positive MACD · Flat 7d trend</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">XRP</td>
+            <td><span class="tag tag-strong-buy">STRONG BUY</span></td>
+            <td>78</td>
+            <td>82</td>
+            <td><span class="tag tag-strong-buy">STRONG BUY</span> <span class="muted" style="font-size:11px;margin-left:4px">80</span></td>
+            <td style="color:#94a3b8;font-size:11px">RSI recovering from oversold · Strong MACD · Near BB lower</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">ADA</td>
+            <td><span class="tag tag-sell">SELL</span></td>
+            <td>22</td>
+            <td>18</td>
+            <td><span class="tag tag-sell">SELL</span> <span class="muted" style="font-size:11px;margin-left:4px">21</span></td>
+            <td style="color:#94a3b8;font-size:11px">RSI extended · Bearish MACD · 7d -12.4%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="padding:8px 12px;font-size:11px;color:#475569;border-top:1px solid #1e2230">
+        Updated 14:32:07
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     SCREEN 4 — PORTFOLIO TAB
+════════════════════════════════════════════════════════════════ -->
+<div class="screen">
+  <div class="screen-label">Screen 4 — Portfolio tab (with holdings)</div>
+
+  <div class="navbar">
+    <div class="wrap">
+      <span class="navbar-brand">PULSAR</span>
+      <div class="navbar-right">
+        <span class="nav-user">mohibb</span>
+        <span class="tag tag-buy">ADMIN</span>
+        <button class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </div>
+  </div>
+  <div class="tabbar">
+    <div class="wrap">
+      <div class="tab">Market</div>
+      <div class="tab">Signals</div>
+      <div class="tab active">Portfolio</div>
+      <div class="tab">Admin</div>
+    </div>
+  </div>
+
+  <div class="wrap content-pad space-y">
+
+    <!-- Hero stats -->
+    <div class="card pf-hero">
+      <div>
+        <div class="stat-label">Total Value</div>
+        <div style="font-size:22px;font-weight:700">$11,842.30</div>
+      </div>
+      <div>
+        <div class="stat-label">Cash</div>
+        <div class="stat-value">$5,124.50</div>
+      </div>
+      <div>
+        <div class="stat-label">P&amp;L</div>
+        <div class="stat-value pos">+$1,842.30 (+18.42%)</div>
+      </div>
+      <div>
+        <div class="stat-label">Positions</div>
+        <div class="stat-value">3</div>
+      </div>
+    </div>
+
+    <!-- Trade panel -->
+    <div class="card p20">
+      <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px">Trade</div>
+      <div class="trade-grid">
+        <div class="space-y" style="--space:12px">
+          <div>
+            <label class="form-label">Coin</label>
+            <select style="width:100%;background:#0d0f14;border:1px solid #1e2230;border-radius:8px;padding:9px 12px;color:#e2e8f0;font-family:inherit;font-size:13px;outline:none">
+              <option>Bitcoin (BTC)</option>
+              <option>Ethereum (ETH)</option>
+              <option>Solana (SOL)</option>
+            </select>
+          </div>
+          <div style="margin-top:12px">
+            <label class="form-label">Amount (USD)</label>
+            <input class="form-input" type="number" placeholder="100" readonly />
+          </div>
+          <div class="flex gap8" style="margin-top:12px">
+            <button class="btn btn-primary" style="flex:1">Buy</button>
+            <button class="btn btn-danger" style="flex:1">Sell</button>
+          </div>
+        </div>
+        <div class="trade-msg">✓ Bought $500.00 of BITCOIN</div>
+      </div>
+    </div>
+
+    <!-- Holdings -->
+    <div class="card" style="overflow-x:auto">
+      <div class="section-header">Holdings</div>
+      <table>
+        <thead>
+          <tr><th>Coin</th><th>Amount</th><th>Avg Buy</th><th>Current</th><th>Value</th><th>P&amp;L</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="font-weight:600">BTC</td>
+            <td>0.022614</td>
+            <td>$61,200</td>
+            <td>$67,420</td>
+            <td>$1,524.80</td>
+            <td class="pos">+$140.60 (+10.16%)</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">ETH</td>
+            <td>1.284000</td>
+            <td>$2,940</td>
+            <td>$3,512</td>
+            <td>$4,509.41</td>
+            <td class="pos">+$734.12 (+19.46%)</td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">XRP</td>
+            <td>1420.000000</td>
+            <td>$0.48</td>
+            <td>$0.53</td>
+            <td>$683.59</td>
+            <td class="pos">+$71.00 (+11.60%)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Transactions -->
+    <div class="card" style="overflow-x:auto">
+      <div class="section-header">
+        <span>Transactions</span>
+        <div class="flex gap8">
+          <button class="btn btn-ghost btn-sm">Export CSV</button>
+          <button class="btn btn-danger btn-sm">Reset</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Type</th><th>Coin</th><th>Amount</th><th>Price</th><th>Total</th><th>Time</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="muted">txn_0003</td>
+            <td><span class="pos" style="font-weight:600">BUY</span></td>
+            <td>XRP</td><td>1420.000000</td><td>$0.48</td><td>$681.60</td>
+            <td class="muted" style="font-size:11px">16/05/2026, 11:02</td>
+          </tr>
+          <tr>
+            <td class="muted">txn_0002</td>
+            <td><span class="pos" style="font-weight:600">BUY</span></td>
+            <td>ETH</td><td>1.284000</td><td>$2,940</td><td>$3,774.96</td>
+            <td class="muted" style="font-size:11px">15/05/2026, 18:44</td>
+          </tr>
+          <tr>
+            <td class="muted">txn_0001</td>
+            <td><span class="pos" style="font-weight:600">BUY</span></td>
+            <td>BTC</td><td>0.022614</td><td>$61,200</td><td>$1,384.18</td>
+            <td class="muted" style="font-size:11px">14/05/2026, 09:15</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     SCREEN 5 — ADMIN TAB
+════════════════════════════════════════════════════════════════ -->
+<div class="screen">
+  <div class="screen-label">Screen 5 — Admin tab</div>
+
+  <div class="navbar">
+    <div class="wrap">
+      <span class="navbar-brand">PULSAR</span>
+      <div class="navbar-right">
+        <span class="nav-user">mohibb</span>
+        <span class="tag tag-buy">ADMIN</span>
+        <button class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </div>
+  </div>
+  <div class="tabbar">
+    <div class="wrap">
+      <div class="tab">Market</div>
+      <div class="tab">Signals</div>
+      <div class="tab">Portfolio</div>
+      <div class="tab active">Admin</div>
+    </div>
+  </div>
+
+  <div class="wrap content-pad space-y">
+
+    <!-- Create user -->
+    <div class="card p20">
+      <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px">Create User</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        <div>
+          <label class="form-label">Username</label>
+          <input class="form-input" value="alice" readonly />
+        </div>
+        <div>
+          <label class="form-label">Password</label>
+          <input class="form-input" type="password" value="••••••" readonly />
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-primary" style="width:100%">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- User table -->
+    <div class="card" style="overflow-x:auto">
+      <div class="section-header">Users</div>
+      <table>
+        <thead>
+          <tr><th>Username</th><th>Role</th><th>Created</th><th>Created by</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="font-weight:600">mohibb</td>
+            <td><span class="tag tag-buy">ADMIN</span></td>
+            <td class="muted">01/04/2026</td>
+            <td class="muted">—</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">alice</td>
+            <td><span class="tag tag-neutral">USER</span></td>
+            <td class="muted">14/05/2026</td>
+            <td class="muted">mohibb</td>
+            <td><button class="btn btn-danger btn-sm">Delete</button></td>
+          </tr>
+          <tr>
+            <td style="font-weight:600">bob</td>
+            <td><span class="tag tag-neutral">USER</span></td>
+            <td class="muted">16/05/2026</td>
+            <td class="muted">mohibb</td>
+            <td><button class="btn btn-danger btn-sm">Delete</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
