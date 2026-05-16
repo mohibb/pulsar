@@ -79,6 +79,8 @@ def client(tmp_path, monkeypatch):
     with (
         patch.object(main, "init_data", return_value=None),
         patch.object(main, "refresh_feargreed", new=AsyncMock()),
+        patch.object(data, "refresh_ohlc", MagicMock()),
+        patch.object(data, "refresh_coins", MagicMock()),
         patch.object(scheduler, "add_job", MagicMock()),
         patch.object(scheduler, "start", MagicMock()),
         patch.object(scheduler, "shutdown", MagicMock()),
