@@ -48,6 +48,9 @@
     .tab.active { border-bottom-color: #a78bfa; color: #a78bfa; }
     .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 999; padding: 0.75rem 1.25rem; border-radius: 0.5rem; font-size: 0.85rem; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
     .toast.show { opacity: 1; }
+    .star-btn { background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0.25rem; opacity: 0.6; transition: opacity 0.15s; }
+    .star-btn:hover { opacity: 1; }
+    .star-btn.watched { opacity: 1; color: #fbbf24; }
   </style>
 </head>
 <body>
@@ -98,6 +101,7 @@
       <div class="tab active" data-tab="market"    onclick="switchTab('market')">Market</div>
       <div class="tab"        data-tab="signals"   onclick="switchTab('signals')">Signals</div>
       <div class="tab"        data-tab="portfolio" onclick="switchTab('portfolio')">Portfolio</div>
+      <div class="tab"        data-tab="news"      onclick="switchTab('news')">News</div>
       <div class="tab"        data-tab="admin"     onclick="switchTab('admin')" id="adminTab" style="display:none">Admin</div>
     </div>
   </div>
@@ -121,15 +125,46 @@
     </div>
 
     <!-- ── Signals tab ────────────────────────────────────────────── -->
-    <div id="tab-signals" class="hidden">
+    <div id="tab-signals" class="hidden space-y-6">
       <div class="card overflow-x-auto" id="signalsTable">
         <div class="p-4 flex items-center gap-2 text-slate-500 text-sm"><div class="spinner"></div><span>Loading signals…</span></div>
+      </div>
+      <div class="card p-5">
+        <div class="text-xs text-slate-400 uppercase tracking-widest mb-4">Signal Backtest</div>
+        <div class="flex gap-3 items-end mb-4">
+          <div class="flex-1">
+            <label class="text-xs text-slate-400 mb-1 block">Coin</label>
+            <select id="backtestCoin"></select>
+          </div>
+          <button class="btn btn-primary" onclick="runBacktest()">Run Backtest</button>
+        </div>
+        <div id="backtestResult"></div>
       </div>
     </div>
 
     <!-- ── Portfolio tab ──────────────────────────────────────────── -->
     <div id="tab-portfolio" class="hidden space-y-6">
+
+      <!-- Portfolio selector -->
+      <div class="card p-4 flex flex-wrap items-center gap-4">
+        <div class="flex items-center gap-3 flex-1">
+          <label class="text-xs text-slate-400 whitespace-nowrap">Portfolio</label>
+          <select id="pfSelector" onchange="switchPortfolio(this.value)" style="max-width:200px"></select>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="newPfName" type="text" placeholder="new name" style="width:130px" />
+          <button class="btn btn-ghost text-xs" onclick="createPortfolio()">+ New</button>
+          <button class="btn btn-danger text-xs" onclick="deletePortfolio()" id="deletePfBtn">Delete</button>
+        </div>
+      </div>
+
       <div id="pfHero" class="card p-5 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm"></div>
+
+      <!-- Portfolio history chart -->
+      <div class="card p-5">
+        <div class="text-xs text-slate-400 uppercase tracking-widest mb-4">Portfolio Value History</div>
+        <div id="pfHistoryChart"><div class="text-slate-500 text-sm">No history yet.</div></div>
+      </div>
 
       <div id="pfRecommendations" class="card p-5">
         <div class="text-xs text-slate-400 uppercase tracking-widest mb-3">What should I do?</div>
@@ -174,6 +209,13 @@
       </div>
     </div>
 
+    <!-- ── News tab ───────────────────────────────────────────────── -->
+    <div id="tab-news" class="hidden">
+      <div id="newsList" class="space-y-3">
+        <div class="flex items-center gap-2 text-slate-500 text-sm"><div class="spinner"></div><span>Loading news…</span></div>
+      </div>
+    </div>
+
     <!-- ── Admin tab ──────────────────────────────────────────────── -->
     <div id="tab-admin" class="hidden space-y-6">
       <div class="card p-5">
@@ -213,6 +255,9 @@ let _coinsData     = [];
 let _portfolioData = null;
 let _currentTab    = 'market';
 let _refreshTimer  = null;
+let _watchlist     = [];
+let _activePf      = 'default';
+let _portfolioNames = ['default'];
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 function authHdrs() {
@@ -292,6 +337,8 @@ function showApp() {
   loadMarket();
   loadFearGreed();
   loadCoins();
+  loadWatchlist();
+  loadPortfolioNames();
   loadPortfolio();
   _refreshTimer = setInterval(() => {
     loadCoins();
@@ -300,6 +347,7 @@ function showApp() {
     if (_currentTab === 'portfolio') loadPortfolio();
     if (_currentTab === 'signals')   loadSignals();
     if (_currentTab === 'admin')     loadUsers();
+    if (_currentTab === 'news')      loadNews();
   }, 60_000);
 }
 
@@ -311,11 +359,12 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === name)
   );
-  ['market','signals','portfolio','admin'].forEach(t =>
+  ['market','signals','portfolio','news','admin'].forEach(t =>
     document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name)
   );
   if (name === 'signals')   loadSignals();
   if (name === 'portfolio') loadPortfolio();
+  if (name === 'news')      loadNews();
   if (name === 'admin')     loadUsers();
 }
 
@@ -368,6 +417,34 @@ function sparkline(prices, w = 64, h = 28) {
     `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
 
+function historyChart(points, w = 600, h = 80) {
+  if (!points || points.length < 2) return '<div class="text-slate-500 text-sm">Not enough history yet.</div>';
+  const vals = points.map(p => p.total_value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * (w - 4) + 2;
+    const y = h - ((v - min) / range) * (h - 6) - 3;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const up = vals[vals.length - 1] >= vals[0];
+  const stroke = up ? '#4ade80' : '#f87171';
+  const first = points[0].date;
+  const last = points[points.length - 1].date;
+  const curVal = vals[vals.length - 1];
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">
+      <polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.8"
+        stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div class="flex justify-between text-xs text-slate-500 mt-1">
+      <span>${first}</span>
+      <span class="${up ? 'pos' : 'neg'} font-semibold">${fmtUsd(curVal)}</span>
+      <span>${last}</span>
+    </div>`;
+}
+
 // ── Plain-language indicator helpers ─────────────────────────────────────────
 function rsiLabel(v) {
   if (v == null) return '—';
@@ -401,6 +478,32 @@ function indicatorColor(label) {
   if (l.includes('mild up') || l.includes('lower range')) return 'pos';
   if (l.includes('mild down')) return 'neg';
   return '';
+}
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+async function loadWatchlist() {
+  const res = await apiFetch('/api/watchlist', { headers: authHdrs() });
+  if (!res || !res.ok) return;
+  _watchlist = await res.json();
+  renderCoinStars();
+}
+
+function renderCoinStars() {
+  document.querySelectorAll('.star-btn[data-coin]').forEach(btn => {
+    const id = btn.dataset.coin;
+    btn.textContent = _watchlist.includes(id) ? '★' : '☆';
+    btn.classList.toggle('watched', _watchlist.includes(id));
+  });
+}
+
+async function toggleWatchlist(coinId) {
+  const watched = _watchlist.includes(coinId);
+  const method = watched ? 'DELETE' : 'POST';
+  const res = await apiFetch(`/api/watchlist/${coinId}`, { method, headers: authHdrs() });
+  if (!res || !res.ok) return;
+  _watchlist = await res.json();
+  renderCoinStars();
+  toast(watched ? `Removed ${coinId} from watchlist` : `Added ${coinId} to watchlist`);
 }
 
 // ── Market tab ────────────────────────────────────────────────────────────────
@@ -479,11 +582,21 @@ async function loadCoins() {
     if (prev) sel.value = prev;
   }
 
+  const bSel = document.getElementById('backtestCoin');
+  if (bSel) {
+    const prev = bSel.value;
+    bSel.innerHTML = d.coins
+      .map(c => `<option value="${c.id}">${c.name} (${c.symbol.toUpperCase()})</option>`)
+      .join('');
+    if (prev) bSel.value = prev;
+  }
+
   document.getElementById('coinList').innerHTML = d.coins.map(c => {
     const ind    = c.indicators || {};
     const rsiLbl = rsiLabel(ind.rsi);
     const macdLbl= macdLabel(ind.macd_histogram);
     const bbLbl  = bbLabel(ind.bb_position);
+    const isWatched = _watchlist.includes(c.id);
     return `
       <div class="card p-4">
         <div class="flex items-start justify-between gap-2 flex-wrap">
@@ -498,6 +611,10 @@ async function loadCoins() {
             ${sparkline(c.price_history_7d)}
             ${signalTag(c.signal)}
             <span class="text-xs">${fmtPct(c.change_24h)}</span>
+            <button class="star-btn ${isWatched ? 'watched' : ''}" data-coin="${c.id}"
+              onclick="toggleWatchlist('${c.id}')" title="${isWatched ? 'Remove from watchlist' : 'Add to watchlist'}">
+              ${isWatched ? '★' : '☆'}
+            </button>
           </div>
         </div>
         <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-center">
@@ -562,13 +679,127 @@ async function loadSignals() {
   `;
 }
 
+async function runBacktest() {
+  const coinId = document.getElementById('backtestCoin').value;
+  if (!coinId) return;
+  const el = document.getElementById('backtestResult');
+  el.innerHTML = '<div class="flex items-center gap-2 text-slate-500 text-sm"><div class="spinner"></div><span>Running…</span></div>';
+  const res = await apiFetch(`/api/backtest/${coinId}`);
+  if (!res || !res.ok) {
+    el.innerHTML = '<div class="text-red-400 text-sm">Backtest failed — no OHLC data available.</div>';
+    return;
+  }
+  const d = await res.json();
+  function statCard(label, stats) {
+    if (!stats || stats.count === 0) return `<div class="rounded-lg p-3 text-center" style="background:#0d0f14"><div class="text-slate-500 text-xs mb-1">${label}</div><div class="text-slate-600 text-sm">No signals</div></div>`;
+    const wr = stats.win_rate;
+    const wrCls = wr >= 55 ? 'pos' : wr < 45 ? 'neg' : '';
+    const ar = stats.avg_return;
+    const arCls = ar >= 0 ? 'pos' : 'neg';
+    return `
+      <div class="rounded-lg p-3" style="background:#0d0f14">
+        <div class="text-slate-500 text-xs mb-2 uppercase tracking-wider">${label}</div>
+        <div class="grid grid-cols-3 gap-2 text-xs text-center">
+          <div><div class="text-slate-500">Signals</div><div class="font-semibold">${stats.count}</div></div>
+          <div><div class="text-slate-500">Win rate</div><div class="font-semibold ${wrCls}">${wr != null ? wr.toFixed(1) + '%' : '—'}</div></div>
+          <div><div class="text-slate-500">Avg return</div><div class="font-semibold ${arCls}">${ar != null ? (ar >= 0 ? '+' : '') + ar.toFixed(2) + '%' : '—'}</div></div>
+        </div>
+      </div>`;
+  }
+  el.innerHTML = `
+    <div class="text-xs text-slate-500 mb-3">${d.total_signals} total signals · ${d.forward_days}-day forward window</div>
+    <div class="grid sm:grid-cols-3 gap-3 mb-4">
+      ${statCard('Buy signals', d.buy)}
+      ${statCard('Hold signals', d.hold)}
+      ${statCard('Sell signals', d.sell)}
+    </div>
+    ${d.recent.length > 0 ? `
+    <div class="text-xs text-slate-400 uppercase tracking-wider mb-2">Recent signals</div>
+    <div style="max-height:200px;overflow-y:auto">
+      <table>
+        <thead><tr><th>Date</th><th>Signal</th><th>Score</th><th>Entry</th><th>${d.forward_days}d return</th></tr></thead>
+        <tbody>
+          ${d.recent.slice().reverse().map(r => `
+            <tr>
+              <td class="text-slate-500 text-xs">${r.date}</td>
+              <td>${signalTag(r.signal)}</td>
+              <td>${r.signal_score.toFixed(0)}</td>
+              <td>${fmtPrice(r.entry_price)}</td>
+              <td class="${r.fwd_return >= 0 ? 'pos' : 'neg'}">${r.fwd_return >= 0 ? '+' : ''}${r.fwd_return.toFixed(2)}%</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+  `;
+}
+
 // ── Portfolio tab ─────────────────────────────────────────────────────────────
+async function loadPortfolioNames() {
+  const res = await apiFetch('/api/portfolios', { headers: authHdrs() });
+  if (!res || !res.ok) return;
+  _portfolioNames = await res.json();
+  renderPfSelector();
+}
+
+function renderPfSelector() {
+  const sel = document.getElementById('pfSelector');
+  if (!sel) return;
+  sel.innerHTML = _portfolioNames.map(n =>
+    `<option value="${n}" ${n === _activePf ? 'selected' : ''}>${n}</option>`
+  ).join('');
+  const deleteBtn = document.getElementById('deletePfBtn');
+  if (deleteBtn) deleteBtn.disabled = _activePf === 'default';
+}
+
+async function switchPortfolio(name) {
+  _activePf = name;
+  renderPfSelector();
+  await loadPortfolio();
+}
+
+async function createPortfolio() {
+  const nameEl = document.getElementById('newPfName');
+  const name = nameEl.value.trim().toLowerCase();
+  if (!name) { toast('Enter a portfolio name', false); return; }
+  const res = await apiFetch('/api/portfolios', {
+    method: 'POST', headers: authHdrs(), body: JSON.stringify({ name }),
+  });
+  if (!res) return;
+  if (!res.ok) { const err = await res.json(); toast(err.detail, false); return; }
+  nameEl.value = '';
+  _portfolioNames = await (await apiFetch('/api/portfolios', { headers: authHdrs() })).json();
+  _activePf = name;
+  renderPfSelector();
+  await loadPortfolio();
+  toast(`Portfolio "${name}" created`);
+}
+
+async function deletePortfolio() {
+  if (_activePf === 'default') { toast('Cannot delete the default portfolio', false); return; }
+  if (!confirm(`Delete portfolio "${_activePf}"? All data will be lost.`)) return;
+  const res = await apiFetch(`/api/portfolios/${_activePf}`, { method: 'DELETE', headers: authHdrs() });
+  if (!res || !res.ok) { toast('Failed to delete portfolio', false); return; }
+  _activePf = 'default';
+  _portfolioNames = await (await apiFetch('/api/portfolios', { headers: authHdrs() })).json();
+  renderPfSelector();
+  await loadPortfolio();
+  toast(`Portfolio deleted`);
+}
+
 async function loadPortfolio() {
-  const res = await apiFetch('/api/portfolio', { headers: authHdrs() });
+  const res = await apiFetch(`/api/portfolio?portfolio=${_activePf}`, { headers: authHdrs() });
   if (!res || !res.ok) return;
   _portfolioData = await res.json();
   renderPortfolio();
   loadRecommendations();
+  loadPortfolioHistory();
+}
+
+async function loadPortfolioHistory() {
+  const res = await apiFetch(`/api/portfolio/history?portfolio=${_activePf}`, { headers: authHdrs() });
+  if (!res || !res.ok) return;
+  const history = await res.json();
+  document.getElementById('pfHistoryChart').innerHTML = historyChart(history);
 }
 
 function renderPortfolio() {
@@ -653,7 +884,7 @@ async function doTrade(type) {
   const res = await apiFetch(`/api/portfolio/${type}`, {
     method: 'POST',
     headers: authHdrs(),
-    body: JSON.stringify({ coin_id, usd_amount }),
+    body: JSON.stringify({ coin_id, usd_amount, portfolio: _activePf }),
   });
   if (!res) return;
   if (!res.ok) {
@@ -663,6 +894,7 @@ async function doTrade(type) {
   }
   _portfolioData = await res.json();
   renderPortfolio();
+  loadPortfolioHistory();
   document.getElementById('tradeAmount').value = '';
   const verb = type === 'buy' ? 'Bought' : 'Sold';
   msgEl.innerHTML = `<span class="pos">✓ ${verb} ${fmtUsd(usd_amount)} of ${coin_id.toUpperCase()}</span>`;
@@ -671,12 +903,13 @@ async function doTrade(type) {
 
 async function resetPortfolio() {
   if (!confirm('Reset portfolio to $10,000 cash? This cannot be undone.')) return;
-  const res = await apiFetch('/api/portfolio/reset', {
+  const res = await apiFetch(`/api/portfolio/reset?portfolio=${_activePf}`, {
     method: 'POST', headers: authHdrs(),
   });
   if (!res || !res.ok) return;
   _portfolioData = await res.json();
   renderPortfolio();
+  loadPortfolioHistory();
   toast('Portfolio reset to $10,000');
 }
 
@@ -693,7 +926,7 @@ function exportCsv() {
   const blob = new Blob([csv], { type: 'text/csv' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
-  a.download = `pulsar_portfolio_${_username}.csv`;
+  a.download = `pulsar_portfolio_${_username}_${_activePf}.csv`;
   a.click();
 }
 
@@ -701,7 +934,7 @@ function exportCsv() {
 async function loadRecommendations() {
   const el = document.getElementById('pfRecommendations');
   if (!el) return;
-  const res = await apiFetch('/api/portfolio/recommendation', { headers: authHdrs() });
+  const res = await apiFetch(`/api/portfolio/recommendation?portfolio=${_activePf}`, { headers: authHdrs() });
   if (!res || !res.ok) {
     el.innerHTML = '<div class="text-xs text-slate-400 uppercase tracking-widest mb-3">What should I do?</div><div class="text-slate-500 text-sm">Could not load advice.</div>';
     return;
@@ -746,6 +979,38 @@ function prefillTrade(coinId, action, amount) {
   const amtEl = document.getElementById('tradeAmount');
   if (amtEl) { amtEl.value = amount; amtEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   toast(`Pre-filled: ${action} $${Number(amount).toLocaleString('en',{maximumFractionDigits:0})} of ${coinId.toUpperCase()}`);
+}
+
+// ── News tab ──────────────────────────────────────────────────────────────────
+async function loadNews() {
+  const el = document.getElementById('newsList');
+  if (!el) return;
+  el.innerHTML = '<div class="flex items-center gap-2 text-slate-500 text-sm"><div class="spinner"></div><span>Loading news…</span></div>';
+  const res = await apiFetch('/api/news');
+  if (!res || !res.ok) {
+    el.innerHTML = '<div class="card p-5 text-red-400 text-sm">Could not load news.</div>';
+    return;
+  }
+  const d = await res.json();
+  if (!d.news || d.news.length === 0) {
+    el.innerHTML = '<div class="card p-5 text-slate-500 text-sm">No news available right now.</div>';
+    return;
+  }
+  el.innerHTML = d.news.map(item => {
+    const date = item.published_at ? new Date(item.published_at).toLocaleString() : '';
+    const thumb = item.thumb
+      ? `<img src="${item.thumb}" class="w-10 h-10 rounded object-cover flex-shrink-0" alt="" onerror="this.style.display='none'" />`
+      : '';
+    return `
+      <a href="${item.url}" target="_blank" rel="noopener" class="card p-4 flex gap-4 items-start hover:border-brand transition-colors" style="text-decoration:none;display:flex">
+        ${thumb}
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-sm leading-snug mb-1">${item.title || 'No title'}</div>
+          ${item.description ? `<div class="text-xs text-slate-400 line-clamp-2 mb-2">${item.description}</div>` : ''}
+          <div class="text-xs text-slate-600">${item.author || ''} ${date ? '· ' + date : ''}</div>
+        </div>
+      </a>`;
+  }).join('');
 }
 
 // ── Admin tab ─────────────────────────────────────────────────────────────────
