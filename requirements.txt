@@ -6,4 +6,6 @@ scikit-learn
 apscheduler
 httpx
 python-jose[cryptography]
-bcrypt
+passlib[bcrypt]
+bcrypt==4.0.1
+python-dotenv
