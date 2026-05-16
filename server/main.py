@@ -6,10 +6,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.staticfiles import StaticFiles
 
 from auth import create_token, decode_token
 from data import (
@@ -554,3 +556,9 @@ def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
 def api_portfolio_reset(user: dict = Depends(get_current_user)):
     reset_portfolio(user["username"])
     return _portfolio_response(user["username"])
+
+
+# Serve the frontend — mounted last so /api/* routes always take priority
+_frontend = Path(__file__).parent.parent / "frontend"
+if _frontend.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
