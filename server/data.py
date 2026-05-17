@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 from typing import Optional
@@ -7,7 +8,19 @@ from pycoingecko import CoinGeckoAPI
 
 logger = logging.getLogger(__name__)
 
-cg = CoinGeckoAPI()
+_demo_key = os.environ.get("COINGECKO_API_KEY", "")
+_pro_key = os.environ.get("COINGECKO_PRO_API_KEY", "")
+
+if _pro_key:
+    cg = CoinGeckoAPI(api_key=_pro_key)
+elif _demo_key:
+    cg = CoinGeckoAPI(demo_api_key=_demo_key)
+else:
+    logger.warning(
+        "No COINGECKO_API_KEY set — OHLC and market_chart endpoints require a free "
+        "Demo key from https://www.coingecko.com/en/api/pricing"
+    )
+    cg = CoinGeckoAPI()
 
 # ── In-memory cache ──────────────────────────────────────────────────────────
 
