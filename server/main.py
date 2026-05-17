@@ -12,26 +12,40 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.staticfiles import StaticFiles
 
 from auth import create_token, decode_token
+from backtest import run_backtest
 from data import (
     get_coin_price,
     get_coins_cache,
     get_feargreed_cache,
+    get_news_cache,
     get_ohlc,
     init_data,
     refresh_feargreed,
+    refresh_news,
 )
 from indicators import compute_indicators, compute_signal
 from ml import get_ml_score
-from portfolio import load_portfolio, reset_portfolio, save_portfolio
+from portfolio import (
+    create_portfolio,
+    delete_portfolio,
+    list_portfolios,
+    load_portfolio,
+    reset_portfolio,
+    save_portfolio,
+)
+from portfolio_history import load_history, record_snapshot
 from recommendation import recommend
 from scheduler import scheduler
 from users import authenticate, create_user, delete_user, list_users, seed_admin
+from watchlist import add_coin as wl_add
+from watchlist import load_watchlist
+from watchlist import remove_coin as wl_remove
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,6 +78,7 @@ async def lifespan(app: FastAPI):
     seed_admin()
     init_data()
     await refresh_feargreed()
+    await refresh_news()
 
     import asyncio
 
@@ -93,6 +108,13 @@ async def lifespan(app: FastAPI):
         "interval",
         hours=6,
         id="refresh_ml",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: asyncio.ensure_future(refresh_news()),
+        "interval",
+        minutes=30,
+        id="refresh_news",
         replace_existing=True,
     )
     scheduler.start()
@@ -271,8 +293,8 @@ def _fg_interpretation(value: int, trend: int) -> str:
     return base + ctx
 
 
-def _portfolio_response(username: str) -> dict:
-    portfolio = load_portfolio(username)
+def _portfolio_response(username: str, pf_name: str = "default") -> dict:
+    portfolio = load_portfolio(username, pf_name)
     coins_cache, _ = get_coins_cache()
     holdings_list = []
     total_held = 0.0
@@ -303,7 +325,10 @@ def _portfolio_response(username: str) -> dict:
     total_pnl = total_value - portfolio["initial_cash"]
     total_pnl_pct = total_pnl / portfolio["initial_cash"] * 100
 
+    record_snapshot(username, total_value, portfolio["cash"], total_pnl_pct, pf_name)
+
     return {
+        "portfolio_name": pf_name,
         "cash": round(portfolio["cash"], 2),
         "initial_cash": portfolio["initial_cash"],
         "holdings": holdings_list,
@@ -478,38 +503,119 @@ def api_signals():
     }
 
 
+@app.get("/api/news")
+async def api_news():
+    news, ts = get_news_cache()
+    if not news:
+        await refresh_news()
+        news, ts = get_news_cache()
+    return {
+        "news": news,
+        "updated_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+    }
+
+
+@app.get("/api/backtest/{coin_id}")
+def api_backtest(coin_id: str):
+    ohlc = get_ohlc(coin_id)
+    if ohlc is None:
+        raise HTTPException(404, f"No OHLC data for {coin_id}")
+    return run_backtest(ohlc)
+
+
+# ── Watchlist routes ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/watchlist")
+def api_watchlist_get(user: dict = Depends(get_current_user)):
+    return load_watchlist(user["username"])
+
+
+@app.post("/api/watchlist/{coin_id}")
+def api_watchlist_add(coin_id: str, user: dict = Depends(get_current_user)):
+    return wl_add(user["username"], coin_id)
+
+
+@app.delete("/api/watchlist/{coin_id}")
+def api_watchlist_remove(coin_id: str, user: dict = Depends(get_current_user)):
+    return wl_remove(user["username"], coin_id)
+
+
+# ── Portfolio management routes ───────────────────────────────────────────────
+
+
+@app.get("/api/portfolios")
+def api_list_portfolios(user: dict = Depends(get_current_user)):
+    return list_portfolios(user["username"])
+
+
+@app.post("/api/portfolios")
+def api_create_portfolio(body: dict, user: dict = Depends(get_current_user)):
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Portfolio name is required")
+    try:
+        create_portfolio(user["username"], name)
+        return {"created": name}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.delete("/api/portfolios/{name}")
+def api_delete_portfolio(name: str, user: dict = Depends(get_current_user)):
+    try:
+        delete_portfolio(user["username"], name)
+        return {"deleted": name}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+
+
 # ── Protected portfolio routes ────────────────────────────────────────────────
 
 
 @app.get("/api/portfolio")
-def api_portfolio(user: dict = Depends(get_current_user)):
-    return _portfolio_response(user["username"])
+def api_portfolio(
+    user: dict = Depends(get_current_user),
+    portfolio: str = Query("default"),
+):
+    return _portfolio_response(user["username"], portfolio)
+
+
+@app.get("/api/portfolio/history")
+def api_portfolio_history(
+    user: dict = Depends(get_current_user),
+    portfolio: str = Query("default"),
+):
+    return load_history(user["username"], portfolio)
 
 
 @app.post("/api/portfolio/buy")
 def api_portfolio_buy(body: dict, user: dict = Depends(get_current_user)):
     coin_id = body.get("coin_id")
     usd_amount = float(body.get("usd_amount", 0))
+    pf_name = body.get("portfolio", "default")
     if usd_amount < 1:
         raise HTTPException(400, "Minimum trade is $1")
     price = get_coin_price(coin_id)
     if price is None:
         raise HTTPException(404, f"Unknown coin: {coin_id}")
-    portfolio = load_portfolio(user["username"])
-    if usd_amount > portfolio["cash"]:
+    pf = load_portfolio(user["username"], pf_name)
+    if usd_amount > pf["cash"]:
         raise HTTPException(400, "Insufficient cash")
     amount = usd_amount / price
-    h = portfolio["holdings"].get(coin_id)
+    h = pf["holdings"].get(coin_id)
     if h:
         new_total = h["amount"] + amount
         h["avg_buy_price"] = (h["amount"] * h["avg_buy_price"] + amount * price) / new_total
         h["amount"] = new_total
     else:
-        portfolio["holdings"][coin_id] = {"amount": amount, "avg_buy_price": price}
-    portfolio["cash"] -= usd_amount
-    portfolio["transactions"].append(
+        pf["holdings"][coin_id] = {"amount": amount, "avg_buy_price": price}
+    pf["cash"] -= usd_amount
+    pf["transactions"].append(
         {
-            "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
+            "id": f"txn_{len(pf['transactions']) + 1:04d}",
             "type": "buy",
             "coin_id": coin_id,
             "amount": amount,
@@ -518,21 +624,22 @@ def api_portfolio_buy(body: dict, user: dict = Depends(get_current_user)):
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
-    save_portfolio(user["username"], portfolio)
-    return _portfolio_response(user["username"])
+    save_portfolio(user["username"], pf, pf_name)
+    return _portfolio_response(user["username"], pf_name)
 
 
 @app.post("/api/portfolio/sell")
 def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
     coin_id = body.get("coin_id")
     usd_amount = float(body.get("usd_amount", 0))
+    pf_name = body.get("portfolio", "default")
     if usd_amount < 1:
         raise HTTPException(400, "Minimum trade is $1")
     price = get_coin_price(coin_id)
     if price is None:
         raise HTTPException(404, f"Unknown coin: {coin_id}")
-    portfolio = load_portfolio(user["username"])
-    h = portfolio["holdings"].get(coin_id)
+    pf = load_portfolio(user["username"], pf_name)
+    h = pf["holdings"].get(coin_id)
     if not h:
         raise HTTPException(400, f"No holding for {coin_id}")
     if usd_amount > h["amount"] * price:
@@ -540,11 +647,11 @@ def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
     sell_amount = usd_amount / price
     h["amount"] -= sell_amount
     if h["amount"] < 1e-10:
-        del portfolio["holdings"][coin_id]
-    portfolio["cash"] += usd_amount
-    portfolio["transactions"].append(
+        del pf["holdings"][coin_id]
+    pf["cash"] += usd_amount
+    pf["transactions"].append(
         {
-            "id": f"txn_{len(portfolio['transactions']) + 1:04d}",
+            "id": f"txn_{len(pf['transactions']) + 1:04d}",
             "type": "sell",
             "coin_id": coin_id,
             "amount": sell_amount,
@@ -553,19 +660,25 @@ def api_portfolio_sell(body: dict, user: dict = Depends(get_current_user)):
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
-    save_portfolio(user["username"], portfolio)
-    return _portfolio_response(user["username"])
+    save_portfolio(user["username"], pf, pf_name)
+    return _portfolio_response(user["username"], pf_name)
 
 
 @app.post("/api/portfolio/reset")
-def api_portfolio_reset(user: dict = Depends(get_current_user)):
-    reset_portfolio(user["username"])
-    return _portfolio_response(user["username"])
+def api_portfolio_reset(
+    user: dict = Depends(get_current_user),
+    portfolio: str = Query("default"),
+):
+    reset_portfolio(user["username"], portfolio)
+    return _portfolio_response(user["username"], portfolio)
 
 
 @app.get("/api/portfolio/recommendation")
-def api_portfolio_recommendation(user: dict = Depends(get_current_user)):
-    portfolio = load_portfolio(user["username"])
+def api_portfolio_recommendation(
+    user: dict = Depends(get_current_user),
+    portfolio: str = Query("default"),
+):
+    pf = load_portfolio(user["username"], portfolio)
     coins_cache, _ = get_coins_cache()
     signals: dict = {}
     for coin_id, raw in coins_cache.items():
@@ -581,10 +694,10 @@ def api_portfolio_recommendation(user: dict = Depends(get_current_user)):
         }
     total_held = sum(
         h["amount"] * (coins_cache.get(cid, {}).get("current_price") or h["avg_buy_price"])
-        for cid, h in portfolio["holdings"].items()
+        for cid, h in pf["holdings"].items()
     )
-    total_value = portfolio["cash"] + total_held
-    return recommend(portfolio, coins_cache, signals, total_value)
+    total_value = pf["cash"] + total_held
+    return recommend(pf, coins_cache, signals, total_value)
 
 
 # Serve the frontend — mounted last so /api/* routes always take priority

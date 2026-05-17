@@ -3,6 +3,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+MOCK_NEWS = [
+    {
+        "title": "Bitcoin reaches new milestone",
+        "url": "https://example.com/btc-news",
+        "thumb": "",
+        "description": "BTC surges past key resistance.",
+        "author": "CryptoDesk",
+        "published_at": "2024-05-01T12:00:00Z",
+    },
+    {
+        "title": "Ethereum upgrade scheduled",
+        "url": "https://example.com/eth-news",
+        "thumb": "",
+        "description": "Devs confirm the next hard fork date.",
+        "author": "CryptoDesk",
+        "published_at": "2024-05-01T10:00:00Z",
+    },
+]
+
 MOCK_COINS = {
     "bitcoin": {
         "id": "bitcoin",
@@ -61,13 +80,17 @@ def client(tmp_path, monkeypatch):
     import data
     import main
     import portfolio
+    import portfolio_history
     import users
+    import watchlist
     from fastapi.testclient import TestClient
     from scheduler import scheduler
 
     # Redirect persistent storage to tmp_path so tests are isolated
     monkeypatch.setattr(users, "USERS_FILE", tmp_path / "users.json")
     monkeypatch.setattr(portfolio, "_PORTFOLIO_DIR", tmp_path)
+    monkeypatch.setattr(portfolio_history, "_HISTORY_DIR", tmp_path)
+    monkeypatch.setattr(watchlist, "_WATCHLIST_DIR", tmp_path)
 
     # Pre-populate caches so routes don't call external APIs
     data._coins_cache = MOCK_COINS.copy()
@@ -75,10 +98,13 @@ def client(tmp_path, monkeypatch):
     data._feargreed_cache = MOCK_FEARGREED.copy()
     data._feargreed_cache_ts = time.time()
     data._ohlc_cache = {coin_id: {"data": MOCK_OHLC, "ts": time.time()} for coin_id in MOCK_COINS}
+    data._news_cache = MOCK_NEWS.copy()
+    data._news_cache_ts = time.time()
 
     with (
         patch.object(main, "init_data", return_value=None),
         patch.object(main, "refresh_feargreed", new=AsyncMock()),
+        patch.object(main, "refresh_news", new=AsyncMock()),
         patch.object(data, "refresh_ohlc", MagicMock()),
         patch.object(data, "refresh_coins", MagicMock()),
         patch.object(scheduler, "add_job", MagicMock()),

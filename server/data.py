@@ -114,6 +114,31 @@ def get_feargreed_cache() -> tuple[dict, float]:
     return _feargreed_cache, _feargreed_cache_ts
 
 
+# ── News ─────────────────────────────────────────────────────────────────────
+
+_news_cache: list = []
+_news_cache_ts: float = 0.0
+_NEWS_TTL = 1800  # 30 minutes
+
+
+async def refresh_news() -> None:
+    global _news_cache, _news_cache_ts
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get("https://api.coingecko.com/api/v3/news")
+            resp.raise_for_status()
+            payload = resp.json()
+            _news_cache = payload.get("data", [])[:20]
+            _news_cache_ts = time.time()
+            logger.info("News cache refreshed (%d items)", len(_news_cache))
+    except Exception as exc:
+        logger.error("Failed to refresh news: %s", exc)
+
+
+def get_news_cache() -> tuple[list, float]:
+    return _news_cache, _news_cache_ts
+
+
 # ── Startup init ─────────────────────────────────────────────────────────────
 
 

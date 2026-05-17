@@ -317,6 +317,126 @@ def test_recommendation_empty_portfolio(client, auth_headers):
     assert isinstance(body["recommendations"], list)
 
 
+# ── /api/news ─────────────────────────────────────────────────────────────────
+
+
+def test_news_returns_200(client):
+    assert client.get("/api/news").status_code == 200
+
+
+def test_news_shape(client):
+    body = client.get("/api/news").json()
+    assert "news" in body
+    assert isinstance(body["news"], list)
+    assert len(body["news"]) == 2
+
+
+# ── /api/backtest ─────────────────────────────────────────────────────────────
+
+
+def test_backtest_known_coin(client):
+    body = client.get("/api/backtest/bitcoin").json()
+    for key in ("forward_days", "total_signals", "buy", "sell", "hold", "recent"):
+        assert key in body
+
+
+def test_backtest_unknown_coin_returns_404(client):
+    assert client.get("/api/backtest/dogecoin").status_code == 404
+
+
+# ── /api/watchlist ────────────────────────────────────────────────────────────
+
+
+def test_watchlist_requires_auth(client):
+    assert client.get("/api/watchlist").status_code == 401
+
+
+def test_watchlist_empty(client, auth_headers):
+    assert client.get("/api/watchlist", headers=auth_headers).json() == []
+
+
+def test_watchlist_add(client, auth_headers):
+    client.post("/api/watchlist/bitcoin", headers=auth_headers)
+    assert "bitcoin" in client.get("/api/watchlist", headers=auth_headers).json()
+
+
+def test_watchlist_remove(client, auth_headers):
+    client.post("/api/watchlist/bitcoin", headers=auth_headers)
+    client.delete("/api/watchlist/bitcoin", headers=auth_headers)
+    assert "bitcoin" not in client.get("/api/watchlist", headers=auth_headers).json()
+
+
+def test_watchlist_add_idempotent(client, auth_headers):
+    client.post("/api/watchlist/bitcoin", headers=auth_headers)
+    client.post("/api/watchlist/bitcoin", headers=auth_headers)
+    assert client.get("/api/watchlist", headers=auth_headers).json().count("bitcoin") == 1
+
+
+# ── /api/portfolios ───────────────────────────────────────────────────────────
+
+
+def test_portfolios_requires_auth(client):
+    assert client.get("/api/portfolios").status_code == 401
+
+
+def test_list_portfolios_returns_default(client, auth_headers):
+    assert "default" in client.get("/api/portfolios", headers=auth_headers).json()
+
+
+def test_create_portfolio(client, auth_headers):
+    client.post("/api/portfolios", json={"name": "trading"}, headers=auth_headers)
+    assert "trading" in client.get("/api/portfolios", headers=auth_headers).json()
+
+
+def test_create_duplicate_portfolio_returns_409(client, auth_headers):
+    client.post("/api/portfolios", json={"name": "dup"}, headers=auth_headers)
+    assert (
+        client.post("/api/portfolios", json={"name": "dup"}, headers=auth_headers).status_code
+        == 409
+    )
+
+
+def test_delete_portfolio(client, auth_headers):
+    client.post("/api/portfolios", json={"name": "temp"}, headers=auth_headers)
+    assert client.delete("/api/portfolios/temp", headers=auth_headers).status_code == 200
+    assert "temp" not in client.get("/api/portfolios", headers=auth_headers).json()
+
+
+def test_delete_default_portfolio_returns_400(client, auth_headers):
+    assert client.delete("/api/portfolios/default", headers=auth_headers).status_code == 400
+
+
+def test_named_portfolio_independent(client, auth_headers):
+    client.post("/api/portfolios", json={"name": "savings"}, headers=auth_headers)
+    client.post(
+        "/api/portfolio/buy",
+        json={"coin_id": "bitcoin", "usd_amount": 500, "portfolio": "savings"},
+        headers=auth_headers,
+    )
+    default_cash = client.get("/api/portfolio", headers=auth_headers).json()["cash"]
+    savings_cash = client.get("/api/portfolio?portfolio=savings", headers=auth_headers).json()[
+        "cash"
+    ]
+    assert default_cash == pytest.approx(10_000.0)
+    assert savings_cash == pytest.approx(9_500.0)
+
+
+# ── /api/portfolio/history ────────────────────────────────────────────────────
+
+
+def test_portfolio_history_requires_auth(client):
+    assert client.get("/api/portfolio/history").status_code == 401
+
+
+def test_portfolio_history_returns_list(client, auth_headers):
+    client.get("/api/portfolio", headers=auth_headers)  # trigger snapshot
+    body = client.get("/api/portfolio/history", headers=auth_headers).json()
+    assert isinstance(body, list)
+    assert len(body) >= 1
+    assert "date" in body[0]
+    assert "total_value" in body[0]
+
+
 def test_users_portfolios_are_isolated(client, auth_headers):
     """Two different users should have independent portfolios."""
     # Admin buys bitcoin
