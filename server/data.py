@@ -79,8 +79,12 @@ def get_coin_price(coin_id: str) -> Optional[float]:
 # ── OHLC history ─────────────────────────────────────────────────────────────
 
 
-def _fetch_ohlc_raw(coin_id: str, days: int = 90) -> list:
-    """Returns list of [timestamp_ms, open, high, low, close] from CoinGecko."""
+def _fetch_ohlc_raw(coin_id: str, days: int = 30) -> list:
+    """Returns list of [timestamp_ms, open, high, low, close] from CoinGecko.
+
+    days=30 yields 4-hour candles (~180 points). days=90 yields 4-day candles
+    (~22 points), which is too few for RSI/MACD/BB calculations.
+    """
     return cg.get_coin_ohlc_by_id(id=coin_id, vs_currency="usd", days=days)
 
 
