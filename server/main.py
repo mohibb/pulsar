@@ -468,7 +468,7 @@ def api_history(coin_id: str):
         }
         for c in ohlc
     ]
-    return {"coin_id": coin_id, "days": 30, "data": data}
+    return {"coin_id": coin_id, "days": 14, "data": data}
 
 
 @app.get("/api/signals")
